@@ -1,6 +1,7 @@
 import React, { Component } from 'react';
 import './App.css';
-import { Midi } from '@tonejs/midi'
+import { PolySynth, Synth } from 'tone';
+import { Midi } from '@tonejs/midi';
 import MidiPlayer from "midi-player-js";
 import Soundfont from "soundfont-player";
 import { OpenSeadragonViewer } from "openseadragon-react-viewer";
@@ -117,8 +118,8 @@ class App extends Component {
 
     //const midi = new Midi(midi_blob);
 
-    //const midiURL = "http://localhost/~pmb/files/dj406yq6980_exp.mid";
-    const midiURL = "http://localhost/~pmb/files/bach_846.mid";
+    const midiURL = "http://localhost/~pmb/files/dj406yq6980_exp.mid";
+    //const midiURL = "http://localhost/~pmb/files/bach_846.mid";
 
     this.getMidi(midiURL);
 
@@ -126,14 +127,38 @@ class App extends Component {
 
   getMidi(midiURL) {
 
-  Midi.fromUrl(midiURL)
-    .then(midiData => this.processMidi(midiData))
-    .catch((error) => console.log(error))
+    Midi.fromUrl(midiURL)
+      .then(midiData => this.processMidi(midiData))
+      .catch((error) => console.log(error));
   }
 
   processMidi(midi) {
     console.log(midi);
     //const midi = new Midi(midiData);
+
+    // XXX Maybe use the Soundfont player as above, but with @tonejs/midi's
+    // MIDI parsing abilities (better than midi-player-js).
+    
+    //synth playback
+    const synths = [];
+    //const now = Tone.now() + 0.5;
+    midi.tracks.forEach(track => {
+      //create a synth for each track
+      const synth = new PolySynth(Synth, {
+        envelope: {
+          attack: 0.02,
+          decay: 0.1,
+          sustain: 0.3,
+          release: 1
+        }
+      }).toMaster()
+      synths.push(synth)
+      //schedule all of the events
+      track.notes.forEach(note => {
+        synth.triggerAttackRelease(note.name, note.duration, note.time, note.velocity)
+      })
+    });
+    // synth.triggerAttackRelease(note.name, note.duration, note.time + now, note.velocity)
 
     console.log(midi.name);
   }
