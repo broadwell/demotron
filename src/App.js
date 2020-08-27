@@ -4,10 +4,9 @@ import { PolySynth, Synth } from 'tone';
 import { Midi } from '@tonejs/midi';
 import MidiPlayer from "midi-player-js";
 import Soundfont from "soundfont-player";
-import { OpenSeadragonViewer } from "openseadragon-react-viewer";
-//import { Viewer } from "react-iiif-viewer";
+//import { OpenSeadragonViewer } from "openseadragon-react-viewer";
+import { MultiViewer } from "react-iiif-viewer";
 //import song from './data/dj406yq6980_exp.mid'
-// import { OpenSeadragonViewer } from './OpenSeadragonViewer';
 
 class App extends Component {
   constructor(props) {
@@ -20,6 +19,7 @@ class App extends Component {
       isPlaying: false,
       instrument: null,
       ac: {"currentTime": 0},
+      currentTick: 0,
       midi: null,
       imageUrl: "https://stacks.stanford.edu/image/iiif/dj406yq6980%2Fdj406yq6980_0001/54,2089,3908,264551/pct:20/270/default.jpg"
     }
@@ -33,38 +33,17 @@ class App extends Component {
     this.processMidi = this.processMidi.bind(this);
   }
 
-/*
-  byteIndex: 1227
-​
-channel: 3
-​
-delta: 5
-​
-name: "Note on"
-​
-noteName: "Ab5"
-​
-noteNumber: 80
-​
-tick: 13917
-​
-track: 3
-​
-velocity: 30
-24.732154195011336
-*/
-
   midiEvent(event) {
-    console.log("MIDI EVENT",event);
-    if (event.name === 'Note on') {
-      console.log("NOTE ON EVENT AT", this.state.ac.currentTime);
-      this.setState({currentNote: event.noteName});
-      const note = this.state.instrument.play(event.noteName, this.state.ac.currentTime, event.delta, {gain: event.velocity/100, duration: event});
-      // Do notes have to be stopped explicitly at the end of their duration
-      //note.stop(this.state.ac.currentTime + event.delta)
-    }
     // Do something when a MIDI event is fired.
     // (this is the same as passing a function to MidiPlayer.Player() when instantiating.
+    if (event.name === 'Note on') {
+      //console.log("NOTE ON EVENT AT", this.state.ac.currentTime, event.tick);
+      this.setState({currentNote: event.noteName, currentTick: event.tick});
+      this.state.instrument.play(event.noteName, this.state.ac.currentTime, event.delta, {gain: event.velocity/100, duration: event});
+      // Do notes have to be stopped explicitly at the end of their duration?
+      //note.stop(this.state.ac.currentTime + event.delta)
+    }
+
   }
 
   instrument(inst) {
@@ -72,7 +51,7 @@ velocity: 30
     this.setState({instrument: inst});
 
     inst.on('ended', function (when, name) {
-      console.log('ended', name)
+      //console.log('ended', name)
     })
 
     /*
@@ -101,7 +80,7 @@ velocity: 30
     });
     
     Player.on('playing', function(currentTick) {
-        console.log("TICK");
+        //console.log(currentTick);
         // Do something while player is playing
         // (this is repeatedly triggered within the play loop)
     });
@@ -195,10 +174,7 @@ velocity: 30
 
     this.setState({ac, midi});
 
-    //Soundfont.instrument(ac, 'clavinet', { soundfont: 'FluidR3_GM' }).then(this.instrument);
     Soundfont.instrument(ac, 'clavinet', { soundfont: 'FluidR3_GM' }).then(piano => {
-
-    console.log(piano);
 
     // XXX Maybe use the Soundfont player as above, but with @tonejs/midi's
     // MIDI parsing abilities (better than midi-player-js).
@@ -240,7 +216,21 @@ velocity: 30
 
   render() {
 
+    /*
+    const fetch = window.fetch;
+    //global.fetch ?
+    window.fetch = function() {
+      console.log("Fetching");
+      return Promise.resolve(fetch.apply(window, arguments));
+    }
+    */
+
     const manifestUrl = "https://purl.stanford.edu/dj406yq6980/iiif/manifest";
+    const imageUrl = "https://stacks.stanford.edu/image/iiif/dj406yq6980%252Fdj406yq6980_0001/info.json";
+    //const manifestUrl = "https://iiif.stack.rdc.library.northwestern.edu/public/06/20/ea/ca/-5/4e/6-/41/81/-a/85/8-/39/dd/ea/0b/b1/c5-manifest.json";
+    //const imageUrl = "https://data.getty.edu/museum/api/iiif/635494/info.json";
+
+    let iiifViewer = <MultiViewer height="800px" width="300px" iiifUrls={[imageUrl]} showToolbar={false}/>;
 
     // Options to show/hide extra UI features in the viewer
     // height(in pixels) option is default to 800 for wide-screens and 500 for narrow-screens
@@ -259,10 +249,9 @@ velocity: 30
           <button id="play" onClick={this.playSong}>Play</button>
           <button id="stop" onClick={this.stopSong}>Stop</button>
         </div>
-        <p>Note being played: {this.state.currentNote} at {this.state.ac.currentTime}</p>
-        <OpenSeadragonViewer manifestUrl={manifestUrl} options={viewerOptions} />
-        {/* <Viewer iiifURL={manifestUrl} /> */}
-        {/* <OpenSeadragonViewer image={this.state.imageUrl} id='ocd-viewer' type='legacy-image-pyramid' /> */}
+        <p>Note being played: {this.state.currentNote} at {this.state.ac.currentTime}s tick {this.state.currentTick} ({this.state.currentTick / this.state.ac.currentTime} ticks/s)</p>
+        {/*<OpenSeadragonViewer manifestUrl={manifestUrl} options={viewerOptions} />*/}
+        {iiifViewer}
       </div>
     );
   }
