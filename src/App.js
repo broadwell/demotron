@@ -21,7 +21,6 @@ class App extends Component {
       currentTick: 0,
       playbackMethod: "sample",
       midi: null,
-      imageUrl: "https://stacks.stanford.edu/image/iiif/dj406yq6980%2Fdj406yq6980_0001/54,2089,3908,264551/pct:20/270/default.jpg"
     }
 
     this.midiEvent = this.midiEvent.bind(this);
@@ -32,6 +31,35 @@ class App extends Component {
     this.getMidi = this.getMidi.bind(this);
     this.loadMidi = this.loadMidi.bind(this);
     this.processMidi = this.processMidi.bind(this);
+  }
+
+  componentDidMount() {
+
+    /* Load MIDI data as JSON {"songname": "base64midi"} */
+    let mididata = require("./mididata.json");
+    this.setState({currentSong: mididata['magic_fire']});
+
+  }
+
+  /* Converts MIDI data for use with Tonejs */
+  dataURItoBlob(dataURI) {
+    // convert base64/URLEncoded data component to raw binary data held in a string
+    var byteString;
+    if (dataURI.split(',')[0].indexOf('base64') >= 0)
+        byteString = atob(dataURI.split(',')[1]);
+    else
+        byteString = unescape(dataURI.split(',')[1]);
+  
+    // separate out the mime component
+    var mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
+  
+    // write the bytes of the string to a typed array
+    var ia = new Uint8Array(byteString.length);
+    for (var i = 0; i < byteString.length; i++) {
+        ia[i] = byteString.charCodeAt(i);
+    }
+  
+    return new Blob([ia], {type:mimeString});
   }
 
   midiEvent(event) {
@@ -47,40 +75,21 @@ class App extends Component {
 
   }
 
-  instrument(inst) {
+  playSong() {
 
-    this.setState({instrument: inst});
+    if (this.state.isPlaying) { return; }
 
-    inst.on('ended', function (when, name) {
-      //console.log('ended', name)
-    })
+    let AudioContext = window.AudioContext || window.webkitAudioContext || false; 
+    let ac = new AudioContext();
 
-    let Player = new MidiPlayer.Player(function(event) {
-      //console.log("MIDI EVENT");
-    });
+    this.setState({ac: ac, isPlaying: true});
 
-    this.setState({samplePlayer: Player});
-
-    Player.on('fileLoaded', function() {
-      console.log("data loaded");
-    });
-    
-    Player.on('playing', function(currentTick) {
-        //console.log(currentTick);
-        // Do something while player is playing
-        // (this is repeatedly triggered within the play loop)
-    });
-    
-    Player.on('midiEvent', this.midiEvent);
-    
-    Player.on('endOfFile', function() {
-        console.log("END OF FILE");
-        // Do something when end of the file has been reached.
-    });
-
-    // Load a MIDI file
-    Player.loadDataUri(this.state.currentSong);
-    Player.play();
+    if (this.state.playbackMethod === "sample") {
+      Soundfont.instrument(ac, 'acoustic_grand_piano', { soundfont: 'FluidR3_GM' }).then(this.instrument);
+    } else {
+      this.loadMidi(this.dataURItoBlob(this.state.currentSong))
+        .then(midiData => this.processMidi(midiData));
+    }
 
   }
 
@@ -102,52 +111,54 @@ class App extends Component {
     }
   }
 
-  playSong() {
-    // Initialize player and register event handler
+  /* SAMPLE-BASED PLAYBACK USING midi-player-js AND soundfont-player */
 
-    if (this.state.isPlaying) { return; }
+  instrument(inst) {
 
-    let AudioContext = window.AudioContext || window.webkitAudioContext || false; 
-    let ac = new AudioContext();
+    /* Instantiate the MIDI player */
+    let Player = new MidiPlayer.Player(function(event) {
+      //console.log("MIDI EVENT");
+    });
 
-    this.setState({ac: ac, isPlaying: true});
+    this.setState({samplePlayer: Player, instrument: inst});
 
-    if (this.state.playbackMethod === "sample") {
-      Soundfont.instrument(ac, 'acoustic_grand_piano', { soundfont: 'FluidR3_GM' }).then(this.instrument);
-    } else {
-      this.loadMidi(this.dataURItoBlob(this.state.currentSong))
-        .then(midiData => this.processMidi(midiData));
-    }
+    /* Various event handlers, mostly used for debugging */
 
-  }
+    // This is how to know when a note sample has finished playing
+    inst.on('ended', function (when, name) {
+      //console.log('ended', name)
+    })
 
-  dataURItoBlob(dataURI) {
-    // convert base64/URLEncoded data component to raw binary data held in a string
-    var byteString;
-    if (dataURI.split(',')[0].indexOf('base64') >= 0)
-        byteString = atob(dataURI.split(',')[1]);
-    else
-        byteString = unescape(dataURI.split(',')[1]);
-  
-    // separate out the mime component
-    var mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
-  
-    // write the bytes of the string to a typed array
-    var ia = new Uint8Array(byteString.length);
-    for (var i = 0; i < byteString.length; i++) {
-        ia[i] = byteString.charCodeAt(i);
-    }
-  
-    return new Blob([ia], {type:mimeString});
-  }
+    Player.on('fileLoaded', function() {
+      console.log("data loaded");
+    });
+    
+    Player.on('playing', function(currentTick) {
+        //console.log(currentTick);
+        // Do something while player is playing
+        // (this is repeatedly triggered within the play loop)
+    });
+    
+    Player.on('midiEvent', this.midiEvent);
+    
+    Player.on('endOfFile', function() {
+        console.log("END OF FILE");
+        // Do something when end of the file has been reached.
+    });
 
-  componentDidMount() {
-
-    let mididata = require("./mididata.json");
-    this.setState({currentSong: mididata['magic_fire']});
+    /* Load MIDI data and start the player */
+    Player.loadDataUri(this.state.currentSong);
+    Player.play();
 
   }
 
+  /* SYNTH-BASED PLAYBACK USING tonejs/midi AND tonejs */
+  /* We're not likely to use this, but some of the ToneJS/midi
+   * functionality *may* come in handy when loading and manipulating
+   * MIDI data and events.
+   */
+
+  /* Alternate way of getting data for Tonejs -- not currently used */
   getMidi(midiURL) {
     Midi.fromUrl(midiURL)
       .then(midiData => this.processMidi(midiData))
@@ -159,8 +170,6 @@ class App extends Component {
   }
 
   processMidi(midi) {
-
-    //console.log(midi);
 
     this.setState({midi});
   
@@ -191,6 +200,7 @@ class App extends Component {
     //const manifestUrl = "https://purl.stanford.edu/dj406yq6980/iiif/manifest";
     const imageUrl = "https://stacks.stanford.edu/image/iiif/dj406yq6980%252Fdj406yq6980_0001/info.json";
 
+    // Would be nice to get a ref to the OpenSeadragon viewer from this
     let iiifViewer = <MultiViewer height="800px" width="300px" iiifUrls={[imageUrl]} showToolbar={false}/>;
 
     let changePlaybackMethod = e => {
