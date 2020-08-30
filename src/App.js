@@ -17,6 +17,12 @@ class App extends Component {
       synths: [],
       isPlaying: false,
       instrument: null,
+      baseTempo: null,
+      gainNode: null,
+      lastVelocities: {}, // Hack to handle repeated notes (see below)
+      volumeRatio : 1.0,
+      tempoRatio: 1.0, // To keep track of gradual roll acceleration
+      sliderTempo: 60.0,
       ac: null,
       currentTick: 0,
       playbackMethod: "sample",
@@ -26,18 +32,39 @@ class App extends Component {
     this.midiEvent = this.midiEvent.bind(this);
     this.playSong = this.playSong.bind(this);
     this.stopSong = this.stopSong.bind(this);
-    this.instrument = this.instrument.bind(this);
+    this.initInstrument = this.initInstrument.bind(this);
     this.dataURItoBlob = this.dataURItoBlob.bind(this);
     this.getMidi = this.getMidi.bind(this);
     this.loadMidi = this.loadMidi.bind(this);
-    this.processMidi = this.processMidi.bind(this);
+    this.synthMidi = this.synthMidi.bind(this);
+    this.updateTempoSlider = this.updateTempoSlider.bind(this);
+    this.updateVolumeSlider = this.updateVolumeSlider.bind(this);
   }
 
   componentDidMount() {
 
     /* Load MIDI data as JSON {"songname": "base64midi"} */
     let mididata = require("./mididata.json");
-    this.setState({currentSong: mididata['magic_fire']});
+
+    let AudioContext = window.AudioContext || window.webkitAudioContext || false; 
+    let ac = new AudioContext();
+    
+    /* Necessary for volume control */
+    const gainNode = ac.createGain();
+    gainNode.connect(ac.destination);
+    this.setState({gainNode});
+
+    let currentSong = mididata['magic_fire'];
+
+    this.setState({ac, currentSong});
+
+    // Instantiate the synth-based player
+    this.loadMidi(this.dataURItoBlob(currentSong))
+        // For now, get starting tempo from Tonejs/Midi parsing
+      .then(midiData => this.setState({midi: midiData, baseTempo: midiData.header.tempos[0]['bpm'], sliderTempo: midiData.header.tempos[0]['bpm']}));
+
+    // Instantiate the sample-based player
+    Soundfont.instrument(ac, 'acoustic_grand_piano', { soundfont: 'FluidR3_GM' }).then(this.initInstrument);
 
   }
 
@@ -62,33 +89,16 @@ class App extends Component {
     return new Blob([ia], {type:mimeString});
   }
 
-  midiEvent(event) {
-    // Do something when a MIDI event is fired.
-    // (this is the same as passing a function to MidiPlayer.Player() when instantiating.
-    if (event.name === 'Note on') {
-      //console.log("NOTE ON EVENT AT", this.state.ac.currentTime, event.tick);
-      this.setState({currentNote: event.noteName, currentTick: event.tick});
-      this.state.instrument.play(event.noteName, this.state.ac.currentTime, event.delta, {gain: event.velocity/100, duration: event});
-      // Do notes have to be stopped explicitly at the end of their duration?
-      //note.stop(this.state.ac.currentTime + event.delta)
-    }
-
-  }
-
   playSong() {
 
     if (this.state.isPlaying) { return; }
 
-    let AudioContext = window.AudioContext || window.webkitAudioContext || false; 
-    let ac = new AudioContext();
-
-    this.setState({ac: ac, isPlaying: true});
+    this.setState({isPlaying: true});
 
     if (this.state.playbackMethod === "sample") {
-      Soundfont.instrument(ac, 'acoustic_grand_piano', { soundfont: 'FluidR3_GM' }).then(this.instrument);
+      this.state.samplePlayer.play();
     } else {
-      this.loadMidi(this.dataURItoBlob(this.state.currentSong))
-        .then(midiData => this.processMidi(midiData));
+      this.synthMidi(this.state.midi);
     }
 
   }
@@ -111,14 +121,22 @@ class App extends Component {
     }
   }
 
+  updateTempoSlider(event) {
+    this.setState({sliderTempo: event.target.value});
+    const playbackTempo = event.target.value * this.state.tempoRatio;
+    this.state.samplePlayer.setTempo(playbackTempo);
+  }
+
+  updateVolumeSlider(event) {
+    this.setState({volumeRatio: event.target.value});
+  }
+
   /* SAMPLE-BASED PLAYBACK USING midi-player-js AND soundfont-player */
 
-  instrument(inst) {
+  initInstrument(inst) {
 
     /* Instantiate the MIDI player */
-    let Player = new MidiPlayer.Player(function(event) {
-      //console.log("MIDI EVENT");
-    });
+    let Player = new MidiPlayer.Player();
 
     this.setState({samplePlayer: Player, instrument: inst});
 
@@ -146,10 +164,56 @@ class App extends Component {
         // Do something when end of the file has been reached.
     });
 
-    /* Load MIDI data and start the player */
+    /* Load MIDI data */
     Player.loadDataUri(this.state.currentSong);
-    Player.play();
+    // Need to look ahead to find starting tempo...
+    /*console.log(Player.getTotalTicks()); // Doesn't work, but Player.totalTicks does
+    console.log(Player.tracks);
+    console.log(Player.events);
+    console.log(Player.totalTicks);
+    console.log(Player.getSongTime());
+    */
 
+  }
+
+  midiEvent(event) {
+    // Do something when a MIDI event is fired.
+    // (this is the same as passing a function to MidiPlayer.Player() when instantiating).
+    if (event.name === 'Note on') {
+      //console.log("NOTE ON EVENT AT", this.state.ac.currentTime, event.tick);
+      //console.log(event);
+
+      const noteName = event.noteName;
+      let noteVelocity = event.velocity;
+
+      /* XXX midi-player-js nullifies the velocity (volume) of any note that
+       * is repeated before its previous instance has ended, for some reason.
+       * Quick-fix hack for now is to assign it the same velocity as its
+       * previous instance. This needs to work better, obviously. */
+      if (noteVelocity === 0) {
+        if (noteName in this.state.lastVelocities) {
+          noteVelocity = this.state.lastVelocities[noteName];
+        }
+      } else {
+        let lastVelocities = Object.assign({}, this.state.lastVelocities);
+        lastVelocities[noteName] = event.velocity;
+        this.setState({lastVelocities});
+      }
+
+      // I've seen 127 used as a velocity -> gain denominator, too...
+      const updatedVolume = noteVelocity/100 * this.state.volumeRatio;
+      this.setState({currentNote: event.noteName, currentTick: event.tick});
+      //console.log("PLAYING",event.noteName,"VOL",updatedVolume,"DURATION",event.delta);
+      this.state.instrument.play(event.noteName, this.state.ac.currentTime, {gain: updatedVolume, duration: event.delta});
+      // Do notes have to be stopped explicitly at the end of their duration?
+      //note.stop(this.state.ac.currentTime + event.delta)
+    } else if (event.name === "Set Tempo") {
+      const tempoRatio = 1 + (parseFloat(event.data) - parseFloat(this.state.baseTempo)) / parseFloat(this.state.baseTempo);
+      const playbackTempo = parseFloat(this.state.sliderTempo) * tempoRatio;
+      
+      this.state.samplePlayer.setTempo(playbackTempo);
+      this.setState({speedupFactor: tempoRatio});
+    }
   }
 
   /* SYNTH-BASED PLAYBACK USING tonejs/midi AND tonejs */
@@ -169,9 +233,9 @@ class App extends Component {
     return new Midi(await midiBlob.arrayBuffer());
   }
 
-  processMidi(midi) {
+  synthMidi(midi) {
 
-    this.setState({midi});
+    //this.setState({midi});
   
     //synth playback
     const synths = [];
@@ -211,8 +275,11 @@ class App extends Component {
     let currentTime = (this.state.ac == null) ? 0 : this.state.ac.currentTime;
     let noteStats = "";
     if (this.state.isPlaying && (this.state.playbackMethod === "sample")) {
-      noteStats = "Note being played: " + this.state.currentNote + " at " + currentTime + "s tick " + this.state.currentTick + "(" + (this.state.currentTick / currentTime) + "ticks/s)";
+      noteStats = "Note being played: " + this.state.currentNote + " at " + currentTime + "s tick " + this.state.currentTick + " (" + (this.state.currentTick / currentTime) + " ticks/s)";
     }
+
+    let tempoSlider = <input type="range" min="0" max="180" value={this.state.sliderTempo} className="slider" id="tempoSlider" onChange={this.updateTempoSlider} />;
+    let volumeSlider = <input type="range" min="0" max="2" step=".1" value={this.state.volumeRatio} className="slider" id="tempoSlider" onChange={this.updateVolumeSlider} />;
 
     return (
       <div className="App">
@@ -243,6 +310,12 @@ class App extends Component {
           </div>
           <button id="play" onClick={this.playSong}>Play</button>
           <button id="stop" onClick={this.stopSong}>Stop</button>
+          <div>
+            Tempo: {tempoSlider} {this.state.sliderTempo} bpm
+          </div>
+          <div>
+            Volume: {volumeSlider} {this.state.volumeRatio}
+          </div>
         </div>
         <p>{noteStats}</p>
         {iiifViewer}
