@@ -19,7 +19,7 @@ class App extends Component {
       instrument: null,
       baseTempo: null,
       gainNode: null,
-      lastVelocities: {}, // Hack to handle repeated notes (see below)
+      lastNotes: {}, // To handle velocity=0 "note off" events
       volumeRatio : 1.0,
       tempoRatio: 1.0, // To keep track of gradual roll acceleration
       sliderTempo: 60.0,
@@ -191,22 +191,20 @@ class App extends Component {
        * Quick-fix hack for now is to assign it the same velocity as its
        * previous instance. This needs to work better, obviously. */
       if (noteVelocity === 0) {
-        if (noteName in this.state.lastVelocities) {
-          noteVelocity = this.state.lastVelocities[noteName];
+ 
+        if (noteName in this.state.lastNotes) {
+          let noteNode = this.state.lastNotes[noteName]
+          noteNode.stop()
         }
       } else {
-        let lastVelocities = Object.assign({}, this.state.lastVelocities);
-        lastVelocities[noteName] = event.velocity;
-        this.setState({lastVelocities});
+        const updatedVolume = noteVelocity/100 * this.state.volumeRatio;
+        let lastNotes = Object.assign({}, this.state.lastNotes);
+        let noteNode = this.state.instrument.play(event.noteName, this.state.ac.currentTime, {gain: updatedVolume});
+        lastNotes[noteName] = noteNode;
+        this.setState({currentNote: event.noteName, currentTick: event.tick, lastNotes});
       }
-
-      // I've seen 127 used as a velocity -> gain denominator, too...
-      const updatedVolume = noteVelocity/100 * this.state.volumeRatio;
-      this.setState({currentNote: event.noteName, currentTick: event.tick});
-      //console.log("PLAYING",event.noteName,"VOL",updatedVolume,"DURATION",event.delta);
-      this.state.instrument.play(event.noteName, this.state.ac.currentTime, {gain: updatedVolume, duration: event.delta});
-      // Do notes have to be stopped explicitly at the end of their duration?
-      //note.stop(this.state.ac.currentTime + event.delta)
+      // event.delta is probably the time since the previous event, not its duration
+      
     } else if (event.name === "Set Tempo") {
       const tempoRatio = 1 + (parseFloat(event.data) - parseFloat(this.state.baseTempo)) / parseFloat(this.state.baseTempo);
       const playbackTempo = parseFloat(this.state.sliderTempo) * tempoRatio;
@@ -275,7 +273,7 @@ class App extends Component {
     let currentTime = (this.state.ac == null) ? 0 : this.state.ac.currentTime;
     let noteStats = "";
     if (this.state.isPlaying && (this.state.playbackMethod === "sample")) {
-      noteStats = "Note being played: " + this.state.currentNote + " at " + currentTime + "s tick " + this.state.currentTick + " (" + (this.state.currentTick / currentTime) + " ticks/s)";
+      noteStats = "Note being played: " + this.state.currentNote + " at " + currentTime + "s, tick " + this.state.currentTick;
     }
 
     let tempoSlider = <input type="range" min="0" max="180" value={this.state.sliderTempo} className="slider" id="tempoSlider" onChange={this.updateTempoSlider} />;
