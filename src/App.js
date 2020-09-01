@@ -6,6 +6,10 @@ import MidiPlayer from "midi-player-js";
 import Soundfont from "soundfont-player";
 import { MultiViewer } from "react-iiif-viewer";
 
+const SYNTH_VOLUME = 3.0;
+const ADSR_SAMPLE_DEFAULTS = { attack: 0.01, decay: 0.1, sustain: 0.9, release: 0.3 }
+const ADSR_SYNTH_DEFAULTS = { attack: 0.01, decay: 0.1, sustain: 0.3, release: 1 }
+
 class App extends Component {
   constructor(props) {
     super(props);
@@ -19,6 +23,8 @@ class App extends Component {
       instrument: null,
       baseTempo: null,
       gainNode: null,
+      adsr: ADSR_SAMPLE_DEFAULTS,
+      sampleInst: 'acoustic_grand_piano',
       lastNotes: {}, // To handle velocity=0 "note off" events
       volumeRatio : 1.0,
       tempoRatio: 1.0, // To keep track of gradual roll acceleration
@@ -30,6 +36,7 @@ class App extends Component {
     }
 
     this.midiEvent = this.midiEvent.bind(this);
+    this.changeInstrument = this.changeInstrument.bind(this);
     this.playSong = this.playSong.bind(this);
     this.stopSong = this.stopSong.bind(this);
     this.initInstrument = this.initInstrument.bind(this);
@@ -39,6 +46,7 @@ class App extends Component {
     this.synthMidi = this.synthMidi.bind(this);
     this.updateTempoSlider = this.updateTempoSlider.bind(this);
     this.updateVolumeSlider = this.updateVolumeSlider.bind(this);
+    this.updateADSR = this.updateADSR.bind(this);
   }
 
   componentDidMount() {
@@ -64,7 +72,8 @@ class App extends Component {
       .then(midiData => this.setState({midi: midiData, baseTempo: midiData.header.tempos[0]['bpm'], sliderTempo: midiData.header.tempos[0]['bpm']}));
 
     // Instantiate the sample-based player
-    Soundfont.instrument(ac, 'acoustic_grand_piano', { soundfont: 'FluidR3_GM' }).then(this.initInstrument);
+    // Theoretically the third argument can be replaced with a pointer to local sample files
+    Soundfont.instrument(ac, this.state.sampleInst, { soundfont: 'FluidR3_GM' }).then(this.initInstrument);
 
   }
 
@@ -128,7 +137,30 @@ class App extends Component {
   }
 
   updateVolumeSlider(event) {
+
     this.setState({volumeRatio: event.target.value});
+
+    this.state.synths.forEach(synth => {
+
+      // Synth volume is in decibels, so volume=0 is still audible.
+      // There are better ways to do this, but we probably won't
+      // be using synth sound anyway, so why bother.
+      synth.volume.value = SYNTH_VOLUME * event.target.value;
+
+    });
+
+  }
+
+  updateADSR(event) {
+    let adsr = {...this.state.adsr};
+    adsr[event.target.id] = event.target.value;
+    this.setState({adsr});
+
+    if (this.state.playbackMethod !== "sample") {
+      this.state.synths.forEach(synth => {
+        synth.options.envelope = adsr;
+      });
+    }
   }
 
   /* SAMPLE-BASED PLAYBACK USING midi-player-js AND soundfont-player */
@@ -194,13 +226,30 @@ class App extends Component {
  
         if (noteName in this.state.lastNotes) {
           let noteNode = this.state.lastNotes[noteName]
-          noteNode.stop()
+          try {
+            noteNode.stop();
+          } catch {
+            console.log("COULDN'T STOP NOTE, PROBABLY DUE TO WEIRD ADSR VALUES, RESETTING");
+            let lastNotes = {...this.state.lastNotes};
+            delete lastNotes[noteName];
+            this.setState({ lastNotes, adsr: ADSR_SAMPLE_DEFAULTS });
+          }
         }
       } else {
         const updatedVolume = noteVelocity/100 * this.state.volumeRatio;
         let lastNotes = Object.assign({}, this.state.lastNotes);
-        let noteNode = this.state.instrument.play(event.noteName, this.state.ac.currentTime, {gain: updatedVolume});
-        lastNotes[noteName] = noteNode;
+        // Play a note -- can also set ADSR values in the opts, could be used to simulate pedaling
+        try {
+          let adsr = [this.state.adsr['attack'], this.state.adsr['decay'], this.state.adsr['sustain'], this.state.adsr['release']];
+          let noteNode = this.state.instrument.play(event.noteName, this.state.ac.currentTime, { gain: updatedVolume, adsr });
+          lastNotes[noteName] = noteNode;
+        } catch {
+          console.log("IMPOSSIBLE ADSR VALUES FOR THIS NOTE, RESETTING");
+          let adsr = [ADSR_SAMPLE_DEFAULTS['attack'], ADSR_SAMPLE_DEFAULTS['decay'], ADSR_SAMPLE_DEFAULTS['sustain'], ADSR_SAMPLE_DEFAULTS['release']];
+          let noteNode = this.state.instrument.play(event.noteName, this.state.ac.currentTime, { gain: updatedVolume, adsr });
+          lastNotes[noteName] = noteNode;
+          this.setState({adsr: ADSR_SAMPLE_DEFAULTS});
+        }
         this.setState({currentNote: event.noteName, currentTick: event.tick, lastNotes});
       }
       // event.delta is probably the time since the previous event, not its duration
@@ -240,14 +289,16 @@ class App extends Component {
     midi.tracks.forEach(track => {
       //create a synth for each track
       const synth = new PolySynth(Synth, {
-        envelope: {
-          attack: 0.02,
+        envelope: this.state.adsr,
+        /*  attack: 0.02,
           decay: 0.1,
           sustain: 0.3,
           release: 1
-        }
+        }, */
+        volume: SYNTH_VOLUME
       });
       synth.toDestination()
+      console.log(synth);
       synths.push(synth);
       //schedule all of the events
       track.notes.forEach(note => {
@@ -255,6 +306,12 @@ class App extends Component {
       });
     });
     this.setState({synths});
+  }
+
+  changeInstrument = e => {
+    this.stopSong();
+    this.setState({sampleInst: e.target.value});
+    Soundfont.instrument(this.state.ac, e.target.value, { soundfont: 'FluidR3_GM' }).then(this.initInstrument);
   }
 
   render() {
@@ -267,17 +324,28 @@ class App extends Component {
 
     let changePlaybackMethod = e => {
       this.stopSong();
-      this.setState({playbackMethod: e.target.id});
+      let adsr = ADSR_SAMPLE_DEFAULTS;
+      if (e.target.id !== "sample") {
+        adsr = ADSR_SYNTH_DEFAULTS;
+      }
+      this.setState({ playbackMethod: e.target.id, adsr });
     }
 
     let currentTime = (this.state.ac == null) ? 0 : this.state.ac.currentTime;
     let noteStats = "";
     if (this.state.isPlaying && (this.state.playbackMethod === "sample")) {
-      noteStats = "Note being played: " + this.state.currentNote + " at " + currentTime + "s, tick " + this.state.currentTick;
+      noteStats = <p>Note being played: {this.state.currentNote} at {currentTime}s, tick {this.state.currentTick}</p>;
     }
 
     let tempoSlider = <input type="range" min="0" max="180" value={this.state.sliderTempo} className="slider" id="tempoSlider" onChange={this.updateTempoSlider} />;
     let volumeSlider = <input type="range" min="0" max="2" step=".1" value={this.state.volumeRatio} className="slider" id="tempoSlider" onChange={this.updateVolumeSlider} />;
+
+    let tempoControl = "";
+    let volumeControl =  <div>Volume: {volumeSlider} {this.state.volumeRatio}</div>;
+
+    if (this.state.playbackMethod === "sample") {
+      tempoControl = <div>Tempo: {tempoSlider} {this.state.sliderTempo} bpm</div>;
+    }
 
     return (
       <div className="App">
@@ -308,14 +376,33 @@ class App extends Component {
           </div>
           <button id="play" onClick={this.playSong}>Play</button>
           <button id="stop" onClick={this.stopSong}>Stop</button>
-          <div>
-            Tempo: {tempoSlider} {this.state.sliderTempo} bpm
+          <div hidden={this.state.playbackMethod !== "sample"}>
+            <label htmlFor="sampleInstrument">
+              Sample instrument:{" "}
+            </label>
+            <select
+              value={this.state.sampleInst}
+              type="string"
+              name="sampleInstrument"
+              id="sampleInstrument"
+              onChange={this.changeInstrument}
+            >
+              <option value="acoustic_grand_piano">Acoustic Grand</option>
+              <option value="bright_acoustic_piano">Bright Acoustic</option>
+              <option value="electric_piano_1">Electric 1</option>
+              <option value="electric_piano_2">Electric 2</option>
+            </select>
           </div>
-          <div>
-            Volume: {volumeSlider} {this.state.volumeRatio}
+          <div style={{float: "right"}} hidden={this.state.playbackMethod !== "sample"}>ADSR envelope (experimental):
+            <div>Attack: <input disabled type="range" min="0" max=".02" step=".01" value={this.state.adsr['attack']} className="slider" id="attack" onChange={this.updateADSR}/> {this.state.adsr['attack']}</div>
+            <div>Decay: <input disabled type="range" min="0" max=".1" step=".01" value={this.state.adsr['decay']} className="slider" id="decay" onChange={this.updateADSR}/> {this.state.adsr['decay']}</div>
+            <div>Sustain: <input type="range" min="0" max="5" step=".1" value={this.state.adsr['sustain']} className="slider" id="sustain" onChange={this.updateADSR}/> {this.state.adsr['sustain']}</div>
+            <div>Release: <input disabled type="range" min="0" max="1" step=".1" value={this.state.adsr['release']} className="slider" id="release" onChange={this.updateADSR}/> {this.state.adsr['release']}</div>          
           </div>
+          {tempoControl}
+          {volumeControl}
+          {noteStats}
         </div>
-        <p>{noteStats}</p>
         {iiifViewer}
       </div>
     );
