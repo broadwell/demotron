@@ -24,6 +24,7 @@ class App extends Component {
       baseTempo: null,
       gainNode: null,
       adsr: ADSR_SAMPLE_DEFAULTS,
+      totalTicks: 0,
       sampleInst: 'acoustic_grand_piano',
       lastNotes: {}, // To handle velocity=0 "note off" events
       volumeRatio : 1.0,
@@ -31,6 +32,7 @@ class App extends Component {
       sliderTempo: 60.0,
       ac: null,
       currentTick: 0,
+      currentProgress: 0.0,
       playbackMethod: "sample",
       midi: null,
     }
@@ -47,6 +49,7 @@ class App extends Component {
     this.updateTempoSlider = this.updateTempoSlider.bind(this);
     this.updateVolumeSlider = this.updateVolumeSlider.bind(this);
     this.updateADSR = this.updateADSR.bind(this);
+    this.skipTo = this.skipTo.bind(this);
   }
 
   componentDidMount() {
@@ -132,6 +135,23 @@ class App extends Component {
     }
   }
 
+  skipTo(event) {
+    if (!this.state.samplePlayer) {
+      return;
+    }
+    const targetProgress = event.target.value;
+    const targetTick = parseInt(targetProgress * parseFloat(this.state.totalTicks));
+
+    this.setState({currentProgress: targetProgress});
+    if (this.state.isPlaying) {
+      this.state.samplePlayer.stop();
+      this.state.samplePlayer.skipToTick(targetTick);
+      this.state.samplePlayer.play();
+    } else {
+      this.state.samplePlayer.skipToTick(targetTick);
+    }
+  }
+
   updateTempoSlider(event) {
     this.setState({sliderTempo: event.target.value});
     const playbackTempo = event.target.value * this.state.tempoRatio;
@@ -172,8 +192,6 @@ class App extends Component {
     /* Instantiate the MIDI player */
     let MidiSamplePlayer = new MidiPlayer.Player();
 
-    this.setState({samplePlayer: MidiSamplePlayer, instrument: inst});
-
     /* Various event handlers, mostly used for debugging */
 
     // This is how to know when a note sample has finished playing
@@ -200,13 +218,14 @@ class App extends Component {
 
     /* Load MIDI data */
     MidiSamplePlayer.loadDataUri(this.state.currentSong);
-    // Need to look ahead to find starting tempo...
+    // May need to look ahead to find starting tempo...
     /*console.log(Player.getTotalTicks()); // Doesn't work, but Player.totalTicks does
     console.log(Player.tracks);
     console.log(Player.events);
-    console.log(Player.totalTicks);
-    console.log(Player.getSongTime());
     */
+    this.setState({samplePlayer: MidiSamplePlayer, instrument: inst, totalTicks: MidiSamplePlayer.totalTicks});
+    //console.log("TOTAL TICKS:",MidiSamplePlayer.totalTicks);
+    //console.log("SONG TIME:",MidiSamplePlayer.getSongTime());
 
   }
 
@@ -225,7 +244,6 @@ class App extends Component {
        * Quick-fix hack for now is to assign it the same velocity as its
        * previous instance. This needs to work better, obviously. */
       if (noteVelocity === 0) {
- 
         if (noteName in this.state.lastNotes) {
           let noteNode = this.state.lastNotes[noteName]
           try {
@@ -252,9 +270,8 @@ class App extends Component {
           lastNotes[noteName] = noteNode;
           this.setState({adsr: ADSR_SAMPLE_DEFAULTS});
         }
-        this.setState({currentNote: event.noteName, currentTick: event.tick, lastNotes});
+        this.setState({currentNote: event.noteName, lastNotes});
       }
-      // event.delta is probably the time since the previous event, not its duration
       
     } else if (event.name === "Set Tempo") {
       const tempoRatio = 1 + (parseFloat(event.data) - parseFloat(this.state.baseTempo)) / parseFloat(this.state.baseTempo);
@@ -263,6 +280,9 @@ class App extends Component {
       this.state.samplePlayer.setTempo(playbackTempo);
       this.setState({speedupFactor: tempoRatio});
     }
+
+    let currentProgress = parseFloat(event.tick) / this.state.totalTicks;
+    this.setState({currentTick: event.tick, currentProgress});
   }
 
   /* SYNTH-BASED PLAYBACK USING tonejs/midi AND tonejs */
@@ -300,7 +320,6 @@ class App extends Component {
         volume: SYNTH_VOLUME
       });
       synth.toDestination()
-      console.log(synth);
       synths.push(synth);
       //schedule all of the events
       track.notes.forEach(note => {
@@ -347,6 +366,11 @@ class App extends Component {
 
     if (this.state.playbackMethod === "sample") {
       tempoControl = <div>Tempo: {tempoSlider} {this.state.sliderTempo} bpm</div>;
+    }
+
+    let pctRemaining = 100;
+    if (this.state.samplePlayer) {
+      pctRemaining = this.state.samplePlayer.getSongPercentRemaining().toFixed(2);
     }
 
     return (
@@ -404,6 +428,7 @@ class App extends Component {
           {tempoControl}
           {volumeControl}
           {noteStats}
+          <div>Progress: <input readOnly={this.state.playbackMethod !== "sample"} type="range" min="0" max="1" step=".01" value={this.state.currentProgress} className="slider" id="progress" onChange={this.skipTo}/> {(this.state.currentProgress * 100.).toFixed(2)+"%"}, {pctRemaining}% remaining </div>
         </div>
         {iiifViewer}
       </div>
