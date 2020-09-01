@@ -72,8 +72,10 @@ class App extends Component {
       .then(midiData => this.setState({midi: midiData, baseTempo: midiData.header.tempos[0]['bpm'], sliderTempo: midiData.header.tempos[0]['bpm']}));
 
     // Instantiate the sample-based player
-    // Theoretically the third argument can be replaced with a pointer to local sample files
-    Soundfont.instrument(ac, this.state.sampleInst, { soundfont: 'FluidR3_GM' }).then(this.initInstrument);
+    // It's possible to load a local soundfont via the soundfont-player,
+    // sample-player, audio-loader toolchain. This is much easier to do
+    // if the soundfont is in Midi.js format
+    Soundfont.instrument(ac, this.state.sampleInst, { soundfont: 'MusyngKite' }).then(this.initInstrument);
 
   }
 
@@ -168,9 +170,9 @@ class App extends Component {
   initInstrument(inst) {
 
     /* Instantiate the MIDI player */
-    let Player = new MidiPlayer.Player();
+    let MidiSamplePlayer = new MidiPlayer.Player();
 
-    this.setState({samplePlayer: Player, instrument: inst});
+    this.setState({samplePlayer: MidiSamplePlayer, instrument: inst});
 
     /* Various event handlers, mostly used for debugging */
 
@@ -179,25 +181,25 @@ class App extends Component {
       //console.log('ended', name)
     })
 
-    Player.on('fileLoaded', function() {
+    MidiSamplePlayer.on('fileLoaded', function() {
       console.log("data loaded");
     });
     
-    Player.on('playing', function(currentTick) {
+    MidiSamplePlayer.on('playing', function(currentTick) {
         //console.log(currentTick);
         // Do something while player is playing
         // (this is repeatedly triggered within the play loop)
     });
     
-    Player.on('midiEvent', this.midiEvent);
+    MidiSamplePlayer.on('midiEvent', this.midiEvent);
     
-    Player.on('endOfFile', function() {
+    MidiSamplePlayer.on('endOfFile', function() {
         console.log("END OF FILE");
         // Do something when end of the file has been reached.
     });
 
     /* Load MIDI data */
-    Player.loadDataUri(this.state.currentSong);
+    MidiSamplePlayer.loadDataUri(this.state.currentSong);
     // Need to look ahead to find starting tempo...
     /*console.log(Player.getTotalTicks()); // Doesn't work, but Player.totalTicks does
     console.log(Player.tracks);
