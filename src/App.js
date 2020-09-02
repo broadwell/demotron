@@ -5,6 +5,7 @@ import { Midi } from '@tonejs/midi';
 import MidiPlayer from "midi-player-js";
 import Soundfont from "soundfont-player";
 import MultiViewer from "./react-iiif-viewer/src/components/MultiViewer";
+import OpenSeadragon from 'openseadragon';
 
 const SYNTH_VOLUME = 3.0;
 const ADSR_SAMPLE_DEFAULTS = { attack: 0.01, decay: 0.1, sustain: 0.9, release: 0.3 }
@@ -81,12 +82,32 @@ class App extends Component {
     // sample-player, audio-loader toolchain. This is much easier to do
     // if the soundfont is in Midi.js format
     Soundfont.instrument(ac, this.state.sampleInst, { soundfont: 'MusyngKite' }).then(this.initInstrument);
-
   }
 
   getOSDref(osdRef) {
-    console.log(osdRef);
+    //console.log(osdRef);
     this.setState({osdRef});
+    /*
+    console.log(osdRef.current.openSeadragon.viewport._contentSize);
+    console.log(osdRef.current.openSeadragon.viewport.getZoom());
+    console.log(osdRef.current.openSeadragon.viewport.getMaxZoom());
+    console.log(osdRef.current.openSeadragon.viewport.getMinZoom());
+    console.log(osdRef.current.openSeadragon.viewport.getBounds());
+    console.log(osdRef.current.openSeadragon.viewport.getBoundsWithMargins());
+    console.log(osdRef.current.openSeadragon.viewport.getHomeBounds());
+    console.log(osdRef.current.openSeadragon.viewport.getHomeZoom());
+    console.log(osdRef.current.openSeadragon.viewport.getAspectRatio());
+    osdRef.current.openSeadragon.viewport.fitVertically(true);
+    let center = osdRef.current.openSeadragon.viewport.getCenter();
+    console.log(center);
+    //var bounds = new OpenSeadragon.Rect(0.25, 0.25, 0.5, 0.5, 0);
+    //osdRef.current.openSeadragon.viewport.fitBounds(bounds, true);
+    console.log(osdRef.current.openSeadragon.viewport.containerSize);
+    console.log(osdRef.current.openSeadragon.viewport.imageToViewportCoordinates(100,100));
+    //osdRef.current.openSeadragon.viewport.zoomBy(1);
+    osdRef.current.openSeadragon.viewport.viewer.addHandler("zoom", (e) => {console.log(e)});
+    //osdRef.current.openSeadragon.viewport.zoomTo(3, null, true);
+    */
   }
 
   /* Converts MIDI data for use with Tonejs */
@@ -208,7 +229,8 @@ class App extends Component {
 
     MidiSamplePlayer.on('fileLoaded', function() {
       console.log("data loaded");
-    });
+      this.state.osdRef.current.openSeadragon.viewport.zoomBy(4);
+    }.bind(this));
     
     MidiSamplePlayer.on('playing', function(currentTick) {
         //console.log(currentTick);
@@ -347,9 +369,6 @@ class App extends Component {
     //const manifestUrl = "https://purl.stanford.edu/dj406yq6980/iiif/manifest";
     const imageUrl = "https://stacks.stanford.edu/image/iiif/dj406yq6980%252Fdj406yq6980_0001/info.json";
 
-    // Would be nice to get a ref to the OpenSeadragon viewer from this
-    let iiifViewer = <MultiViewer height="800px" width="300px" iiifUrls={[imageUrl]} showToolbar={false} backdoor={this.getOSDref} />;
-
     let changePlaybackMethod = e => {
       this.stopSong();
       let adsr = ADSR_SAMPLE_DEFAULTS;
@@ -437,7 +456,13 @@ class App extends Component {
           {noteStats}
           <div>Progress: <input hidden={this.state.playbackMethod !== "sample"} type="range" min="0" max="1" step=".01" value={this.state.currentProgress} className="slider" id="progress" onChange={this.skipTo}/> {(this.state.currentProgress * 100.).toFixed(2)+"%"}, {pctRemaining}% remaining </div>
         </div>
-        {iiifViewer}
+        <MultiViewer
+          height="800px"
+          width="300px"
+          iiifUrls={[imageUrl]}
+          showToolbar={false}
+          backdoor={this.getOSDref}
+        />;
       </div>
     );
   }
