@@ -2,6 +2,11 @@
   "name": "demotron",
   "version": "0.1.0",
   "private": true,
+  "description": "",
+  "main": "dist/index.js",
+  "files": [
+    "/dist"
+  ],
   "homepage": ".",
   "dependencies": {
     "@emotion/core": "^10.0.34",
@@ -10,18 +15,21 @@
     "@testing-library/react": "^9.3.2",
     "@testing-library/user-event": "^7.1.2",
     "@tonejs/midi": "^2.0.25",
+    "axios": "^0.20.0",
+    "babel-plugin-inline-react-svg": "^1.1.1",
     "midi-player-js": "^2.0.13",
+    "openseadragon": "^2.4.2",
     "react": "^16.13.1",
     "react-dom": "^16.13.1",
-    "react-iiif-viewer": "^1.0.2",
     "react-jss": "^10.4.0",
     "react-scripts": "3.4.3",
     "soundfont-player": "^0.12.0",
-    "tone": "^14.7.39"
+    "tone": "^14.7.39",
+    "uuid": "^8.3.0"
   },
   "scripts": {
-    "start": "BROWSER=none react-scripts start",
-    "build": "CI= react-scripts build",
+    "start": "parcel index.html",
+    "build": "parcel index.html",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },
@@ -39,5 +47,15 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
+  },
+  "devDependencies": {
+    "@babel/core": "^7.11.5",
+    "@babel/plugin-transform-runtime": "^7.11.5",
+    "@babel/preset-env": "^7.11.5",
+    "@babel/preset-react": "^7.10.4",
+    "@svgr/parcel-plugin-svgr": "^5.4.0",
+    "babel": "^6.23.0",
+    "canvas": "^2.6.1",
+    "parcel-bundler": "^1.12.4"
   }
 }

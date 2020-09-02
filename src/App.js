@@ -4,7 +4,7 @@ import { PolySynth, Synth /*, Master */ } from 'tone';
 import { Midi } from '@tonejs/midi';
 import MidiPlayer from "midi-player-js";
 import Soundfont from "soundfont-player";
-import { MultiViewer } from "react-iiif-viewer";
+import MultiViewer from "./react-iiif-viewer/src/components/MultiViewer";
 
 const SYNTH_VOLUME = 3.0;
 const ADSR_SAMPLE_DEFAULTS = { attack: 0.01, decay: 0.1, sustain: 0.9, release: 0.3 }
@@ -35,6 +35,7 @@ class App extends Component {
       currentProgress: 0.0,
       playbackMethod: "sample",
       midi: null,
+      osdRef: null
     }
 
     this.midiEvent = this.midiEvent.bind(this);
@@ -50,6 +51,7 @@ class App extends Component {
     this.updateVolumeSlider = this.updateVolumeSlider.bind(this);
     this.updateADSR = this.updateADSR.bind(this);
     this.skipTo = this.skipTo.bind(this);
+    this.getOSDref = this.getOSDref.bind(this);
   }
 
   componentDidMount() {
@@ -80,6 +82,11 @@ class App extends Component {
     // if the soundfont is in Midi.js format
     Soundfont.instrument(ac, this.state.sampleInst, { soundfont: 'MusyngKite' }).then(this.initInstrument);
 
+  }
+
+  getOSDref(osdRef) {
+    console.log(osdRef);
+    this.setState({osdRef});
   }
 
   /* Converts MIDI data for use with Tonejs */
@@ -261,16 +268,16 @@ class App extends Component {
         // Play a note -- can also set ADSR values in the opts, could be used to simulate pedaling
         try {
           let adsr = [this.state.adsr['attack'], this.state.adsr['decay'], this.state.adsr['sustain'], this.state.adsr['release']];
-          let noteNode = this.state.instrument.play(event.noteName, this.state.ac.currentTime, { gain: updatedVolume, adsr });
+          let noteNode = this.state.instrument.play(noteName, this.state.ac.currentTime, { gain: updatedVolume, adsr });
           lastNotes[noteName] = noteNode;
         } catch {
           console.log("IMPOSSIBLE ADSR VALUES FOR THIS NOTE, RESETTING");
           let adsr = [ADSR_SAMPLE_DEFAULTS['attack'], ADSR_SAMPLE_DEFAULTS['decay'], ADSR_SAMPLE_DEFAULTS['sustain'], ADSR_SAMPLE_DEFAULTS['release']];
-          let noteNode = this.state.instrument.play(event.noteName, this.state.ac.currentTime, { gain: updatedVolume, adsr });
+          let noteNode = this.state.instrument.play(noteName, this.state.ac.currentTime, { gain: updatedVolume, adsr });
           lastNotes[noteName] = noteNode;
           this.setState({adsr: ADSR_SAMPLE_DEFAULTS});
         }
-        this.setState({currentNote: event.noteName, lastNotes});
+        this.setState({currentNote: noteName, lastNotes});
       }
       
     } else if (event.name === "Set Tempo") {
@@ -341,7 +348,7 @@ class App extends Component {
     const imageUrl = "https://stacks.stanford.edu/image/iiif/dj406yq6980%252Fdj406yq6980_0001/info.json";
 
     // Would be nice to get a ref to the OpenSeadragon viewer from this
-    let iiifViewer = <MultiViewer height="800px" width="300px" iiifUrls={[imageUrl]} showToolbar={false}/>;
+    let iiifViewer = <MultiViewer height="800px" width="300px" iiifUrls={[imageUrl]} showToolbar={false} backdoor={this.getOSDref} />;
 
     let changePlaybackMethod = e => {
       this.stopSong();
@@ -428,7 +435,7 @@ class App extends Component {
           {tempoControl}
           {volumeControl}
           {noteStats}
-          <div>Progress: <input readOnly={this.state.playbackMethod !== "sample"} type="range" min="0" max="1" step=".01" value={this.state.currentProgress} className="slider" id="progress" onChange={this.skipTo}/> {(this.state.currentProgress * 100.).toFixed(2)+"%"}, {pctRemaining}% remaining </div>
+          <div>Progress: <input hidden={this.state.playbackMethod !== "sample"} type="range" min="0" max="1" step=".01" value={this.state.currentProgress} className="slider" id="progress" onChange={this.skipTo}/> {(this.state.currentProgress * 100.).toFixed(2)+"%"}, {pctRemaining}% remaining </div>
         </div>
         {iiifViewer}
       </div>
