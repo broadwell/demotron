@@ -36,7 +36,8 @@ class App extends Component {
       currentProgress: 0.0,
       playbackMethod: "sample",
       midi: null,
-      osdRef: null
+      osdRef: null,
+      firstHolePx: 0
     }
 
     this.midiEvent = this.midiEvent.bind(this);
@@ -225,12 +226,11 @@ class App extends Component {
     // This is how to know when a note sample has finished playing
     inst.on('ended', function (when, name) {
       //console.log('ended', name)
-    })
+    });
 
     MidiSamplePlayer.on('fileLoaded', function() {
       console.log("data loaded");
-      this.state.osdRef.current.openSeadragon.viewport.zoomBy(4);
-    }.bind(this));
+    });
     
     MidiSamplePlayer.on('playing', function(currentTick) {
         //console.log(currentTick);
@@ -252,7 +252,66 @@ class App extends Component {
     console.log(Player.tracks);
     console.log(Player.events);
     */
-    this.setState({samplePlayer: MidiSamplePlayer, instrument: inst, totalTicks: MidiSamplePlayer.totalTicks});
+    this.state.osdRef.current.openSeadragon.viewport.fitHorizontally(true);
+    //console.log("CONTENT SIZE",this.state.osdRef.current.openSeadragon.viewport._contentSize);
+    let viewportBounds = this.state.osdRef.current.openSeadragon.viewport.getBounds();
+    //console.log("BOUNDS", viewportBounds);
+    let fittedViewportZoom = this.state.osdRef.current.openSeadragon.viewport.getZoom();
+    //console.log("ZOOM",fittedViewportZoom);
+    // This will do a "dry run" of the playback and set all event timings.
+    // May be useful, but not necessary at the moment.
+    //MidiSamplePlayer.fileLoaded();
+    //console.log(MidiSamplePlayer.events);
+    let firstHolePx = 0;
+    let lastHolePx = 0;
+    let holeWidthPx = 0;
+    MidiSamplePlayer.events[0].forEach((event) => {
+      let text = event.string;
+      if (!text) return;
+      /* @IMAGE_WIDTH and @IMAGE_LENGTH should be the same as from viewport._contentSize
+       * Can't think of why they wouldn't be, but maybe check anyway. Would need to scale
+       * all pixel values if so.
+       * Other potentially useful values:
+       * @ROLL_WIDTH (this is smaller than the image width)
+       * @HARD_MARGIN_TREBLE
+       * @HARD_MARGIN_BASS
+       * @HOLE_SEPARATION
+       * @HOLE_OFFSET
+       * All of the source/performance/recording metadata is in this track as well.
+       */
+      if (text.startsWith('@FIRST_HOLE:')) {
+        firstHolePx = parseInt(text.split("\t")[2].replace("px",""));
+        //console.log("FIRST HOLE:",firstHolePx);
+      } else if (text.startsWith('@LAST_HOLE:')) {
+        lastHolePx = parseInt(text.split("\t")[2].replace("px",""));
+        //console.log("LAST HOLE:",lastHolePx);
+      } else if (text.startsWith('@AVG_HOLE_WIDTH:')) {
+        holeWidthPx = parseInt(text.split("\t")[1].replace("px",""));
+        //console.log("HOLE WIDTH:",holeWidthPx);
+      }
+    });
+
+    //console.log(this.state.osdRef.current.openSeadragon);
+
+    let firstLineViewport = this.state.osdRef.current.openSeadragon.viewport.imageToViewportCoordinates(0,firstHolePx);
+    //console.log("VIEWPORT COORDS OF FIRST HOLE LINE",firstLineViewport);
+    let firstLineCenter = new OpenSeadragon.Point(viewportBounds.width / 2.0, firstLineViewport.y);
+
+    //this.state.osdRef.current.openSeadragon.viewport.panTo(firstLineCenter);
+    let bounds = new OpenSeadragon.Rect(0.0,firstLineViewport.y - (viewportBounds.height / 2.0),viewportBounds.width, viewportBounds.height);
+    this.state.osdRef.current.openSeadragon.viewport.fitBounds(bounds, true);
+
+    viewportBounds = this.state.osdRef.current.openSeadragon.viewport.getBounds();
+    //console.log("UPDATED BOUNDS",viewportBounds);
+    let playPoint = new OpenSeadragon.Point(0, viewportBounds.y + (viewportBounds.height / 2.0));
+    //console.log(playPoint);
+
+    var playLine = document.createElement("div");
+    playLine.id = "play-line";
+
+    this.state.osdRef.current.openSeadragon.viewport.viewer.addOverlay(playLine, playPoint, OpenSeadragon.Placement.TOP_LEFT);
+
+    this.setState({samplePlayer: MidiSamplePlayer, instrument: inst, totalTicks: MidiSamplePlayer.totalTicks, firstHolePx});
     //console.log("TOTAL TICKS:",MidiSamplePlayer.totalTicks);
     //console.log("SONG TIME:",MidiSamplePlayer.getSongTime());
 
@@ -309,6 +368,26 @@ class App extends Component {
       this.state.samplePlayer.setTempo(playbackTempo);
       this.setState({speedupFactor: tempoRatio});
     }
+
+    /* PAN VIEWPORT IMAGE */
+    // Do we want to prevent user from panning/zooming image?
+    // Ideally they would only be prevented from doing so during playback.
+    // Disable controls then, or just re-pan and zoom the viewer at each event?
+    //this.state.osdRef.current.openSeadragon.viewport.fitHorizontally(true);
+    let viewportBounds = this.state.osdRef.current.openSeadragon.viewport.getBounds();
+    //console.log("BOUNDS", viewportBounds);
+
+    let linePx = this.state.firstHolePx + event.tick; // Craig says this will work
+    //console.log("IMAGE Y COORD OF LINE IN PX",linePx);
+
+    let lineViewport = this.state.osdRef.current.openSeadragon.viewport.imageToViewportCoordinates(0,linePx);
+    //console.log("VIEWPORT COORDS OF HOLE LINE",lineViewport);
+    let lineCenter = new OpenSeadragon.Point(viewportBounds.width / 2.0, lineViewport.y);
+    this.state.osdRef.current.openSeadragon.viewport.panTo(lineCenter);
+
+    let playLine = this.state.osdRef.current.openSeadragon.viewport.viewer.getOverlayById('play-line');
+
+    playLine.update(lineViewport, OpenSeadragon.Placement.TOP_LEFT);
 
     let currentProgress = parseFloat(event.tick) / this.state.totalTicks;
     this.setState({currentTick: event.tick, currentProgress});
@@ -462,7 +541,7 @@ class App extends Component {
           iiifUrls={[imageUrl]}
           showToolbar={false}
           backdoor={this.getOSDref}
-        />;
+        />
       </div>
     );
   }
