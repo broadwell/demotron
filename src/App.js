@@ -242,8 +242,9 @@ class App extends Component {
     
     MidiSamplePlayer.on('endOfFile', function() {
         console.log("END OF FILE");
+        this.stopSong();
         // Do something when end of the file has been reached.
-    });
+    }.bind(this));
 
     /* Load MIDI data */
     MidiSamplePlayer.loadDataUri(this.state.currentSong);
@@ -306,11 +307,14 @@ class App extends Component {
     let playPoint = new OpenSeadragon.Point(0, viewportBounds.y + (viewportBounds.height / 2.0));
     //console.log(playPoint);
 
-    var playLine = document.createElement("div");
-    playLine.id = "play-line";
-
-    this.state.osdRef.current.openSeadragon.viewport.viewer.addOverlay(playLine, playPoint, OpenSeadragon.Placement.TOP_LEFT);
-
+    let playLine = this.state.osdRef.current.openSeadragon.viewport.viewer.getOverlayById('play-line');
+    if (!playLine) {
+      playLine = document.createElement("div");
+      playLine.id = "play-line";
+      this.state.osdRef.current.openSeadragon.viewport.viewer.addOverlay(playLine, playPoint, OpenSeadragon.Placement.TOP_LEFT);
+    } else {
+      playLine.update(playPoint, OpenSeadragon.Placement.TOP_LEFT);
+    }
     this.setState({samplePlayer: MidiSamplePlayer, instrument: inst, totalTicks: MidiSamplePlayer.totalTicks, firstHolePx});
     //console.log("TOTAL TICKS:",MidiSamplePlayer.totalTicks);
     //console.log("SONG TIME:",MidiSamplePlayer.getSongTime());
@@ -537,7 +541,7 @@ class App extends Component {
         </div>
         <MultiViewer
           height="800px"
-          width="300px"
+          width="500px"
           iiifUrls={[imageUrl]}
           showToolbar={false}
           backdoor={this.getOSDref}
