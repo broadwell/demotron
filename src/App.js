@@ -8,8 +8,9 @@ import MultiViewer from "./react-iiif-viewer/src/components/MultiViewer";
 import OpenSeadragon from 'openseadragon';
 
 const SYNTH_VOLUME = 3.0;
-const ADSR_SAMPLE_DEFAULTS = { attack: 0.01, decay: 0.1, sustain: 0.9, release: 0.3 }
-const ADSR_SYNTH_DEFAULTS = { attack: 0.01, decay: 0.1, sustain: 0.3, release: 1 }
+const ADSR_SAMPLE_DEFAULTS = { attack: 0.01, decay: 0.1, sustain: 0.9, release: 0.3 };
+const ADSR_SYNTH_DEFAULTS = { attack: 0.01, decay: 0.1, sustain: 0.3, release: 1 };
+const UPDATE_INTERVAL_MS = 100;
 
 class App extends Component {
   constructor(props) {
@@ -20,7 +21,7 @@ class App extends Component {
       currentSong: null,
       samplePlayer: null,
       synths: [],
-      isPlaying: false,
+      isPlaying: false, // Can also just check Player.isPlaying() (samples only)
       instrument: null,
       baseTempo: null,
       gainNode: null,
@@ -37,7 +38,8 @@ class App extends Component {
       playbackMethod: "sample",
       midi: null,
       osdRef: null,
-      firstHolePx: 0
+      firstHolePx: 0,
+      playTimer: null
     }
 
     this.midiEvent = this.midiEvent.bind(this);
@@ -54,6 +56,7 @@ class App extends Component {
     this.updateADSR = this.updateADSR.bind(this);
     this.skipTo = this.skipTo.bind(this);
     this.getOSDref = this.getOSDref.bind(this);
+    this.panViewportToTick = this.panViewportToTick.bind(this);
   }
 
   componentDidMount() {
@@ -83,6 +86,7 @@ class App extends Component {
     // sample-player, audio-loader toolchain. This is much easier to do
     // if the soundfont is in Midi.js format
     Soundfont.instrument(ac, this.state.sampleInst, { soundfont: 'MusyngKite' }).then(this.initInstrument);
+    //Soundfont.instrument(ac, "http://localhost/~pmb/demotron/salamander_acoustic_grand-mod-ogg.js" ).then(this.initInstrument);
   }
 
   getOSDref(osdRef) {
@@ -136,13 +140,15 @@ class App extends Component {
 
     if (this.state.isPlaying) { return; }
 
-    this.setState({isPlaying: true});
-
     if (this.state.playbackMethod === "sample") {
       this.state.samplePlayer.play();
     } else {
       this.synthMidi(this.state.midi);
     }
+
+    let playTimer = setInterval(this.panViewportToTick, UPDATE_INTERVAL_MS);
+
+    this.setState({isPlaying: true, playTimer});
 
   }
 
@@ -160,7 +166,9 @@ class App extends Component {
         });
       }
 
-      this.setState({isPlaying: false , synths: []});
+      clearInterval(this.state.playTimer);
+ 
+      this.setState({isPlaying: false , synths: [], playTimer: null});
     }
   }
 
@@ -373,15 +381,27 @@ class App extends Component {
       this.setState({speedupFactor: tempoRatio});
     }
 
+    this.panViewportToTick(event.tick);
+
+  }
+
+  panViewportToTick(tick) {
     /* PAN VIEWPORT IMAGE */
     // Do we want to prevent user from panning/zooming image?
     // Ideally they would only be prevented from doing so during playback.
     // Disable controls then, or just re-pan and zoom the viewer at each event?
+
+    // XXX Assumes we're only using the sample player -- which is a good assumption at this point
+    if (isNaN(tick) || (tick === null)) {
+      tick = this.state.samplePlayer.getCurrentTick();
+    }
+
+
     //this.state.osdRef.current.openSeadragon.viewport.fitHorizontally(true);
     let viewportBounds = this.state.osdRef.current.openSeadragon.viewport.getBounds();
     //console.log("BOUNDS", viewportBounds);
 
-    let linePx = this.state.firstHolePx + event.tick; // Craig says this will work
+    let linePx = this.state.firstHolePx + tick; // Craig says this will work
     //console.log("IMAGE Y COORD OF LINE IN PX",linePx);
 
     let lineViewport = this.state.osdRef.current.openSeadragon.viewport.imageToViewportCoordinates(0,linePx);
@@ -393,8 +413,10 @@ class App extends Component {
 
     playLine.update(lineViewport, OpenSeadragon.Placement.TOP_LEFT);
 
-    let currentProgress = parseFloat(event.tick) / this.state.totalTicks;
-    this.setState({currentTick: event.tick, currentProgress});
+    let currentProgress = parseFloat(tick) / this.state.totalTicks;
+
+    this.setState({currentTick: tick, currentProgress});
+
   }
 
   /* SYNTH-BASED PLAYBACK USING tonejs/midi AND tonejs */
