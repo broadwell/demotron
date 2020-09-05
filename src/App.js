@@ -1,16 +1,15 @@
 import React, { Component } from 'react';
 import './App.css';
-import { PolySynth, Synth /*, Master */ } from 'tone';
-import { Midi } from '@tonejs/midi';
+
 import MidiPlayer from "midi-player-js";
 import Soundfont from "soundfont-player";
 import MultiViewer from "./react-iiif-viewer/src/components/MultiViewer";
 import OpenSeadragon from 'openseadragon';
+import { Piano, KeyboardShortcuts, MidiNumbers } from 'react-piano';
+import 'react-piano/dist/styles.css';
 
-const SYNTH_VOLUME = 3.0;
 const ADSR_SAMPLE_DEFAULTS = { attack: 0.01, decay: 0.1, sustain: 0.9, release: 0.3 };
-const ADSR_SYNTH_DEFAULTS = { attack: 0.01, decay: 0.1, sustain: 0.3, release: 1 };
-const UPDATE_INTERVAL_MS = 100;
+const UPDATE_INTERVAL_MS = 10;
 
 class App extends Component {
   constructor(props) {
@@ -20,7 +19,6 @@ class App extends Component {
       currentNote: "WAITING",
       currentSong: null,
       samplePlayer: null,
-      synths: [],
       isPlaying: false, // Can also just check Player.isPlaying() (samples only)
       instrument: null,
       baseTempo: null,
@@ -35,8 +33,6 @@ class App extends Component {
       ac: null,
       currentTick: 0,
       currentProgress: 0.0,
-      playbackMethod: "sample",
-      midi: null,
       osdRef: null,
       firstHolePx: 0,
       playTimer: null
@@ -48,9 +44,6 @@ class App extends Component {
     this.stopSong = this.stopSong.bind(this);
     this.initInstrument = this.initInstrument.bind(this);
     this.dataURItoBlob = this.dataURItoBlob.bind(this);
-    this.getMidi = this.getMidi.bind(this);
-    this.loadMidi = this.loadMidi.bind(this);
-    this.synthMidi = this.synthMidi.bind(this);
     this.updateTempoSlider = this.updateTempoSlider.bind(this);
     this.updateVolumeSlider = this.updateVolumeSlider.bind(this);
     this.updateADSR = this.updateADSR.bind(this);
@@ -75,11 +68,8 @@ class App extends Component {
     let currentSong = mididata['magic_fire'];
 
     this.setState({ac, currentSong});
-
-    // Instantiate the synth-based player
-    this.loadMidi(this.dataURItoBlob(currentSong))
-        // For now, get starting tempo from Tonejs/Midi parsing
-      .then(midiData => this.setState({midi: midiData, baseTempo: midiData.header.tempos[0]['bpm'], sliderTempo: midiData.header.tempos[0]['bpm']}));
+        
+    //this.setState({baseTempo: midiData.header.tempos[0]['bpm'], sliderTempo: midiData.header.tempos[0]['bpm']}));
 
     // Instantiate the sample-based player
     // It's possible to load a local soundfont via the soundfont-player,
@@ -140,11 +130,7 @@ class App extends Component {
 
     if (this.state.isPlaying) { return; }
 
-    if (this.state.playbackMethod === "sample") {
-      this.state.samplePlayer.play();
-    } else {
-      this.synthMidi(this.state.midi);
-    }
+    this.state.samplePlayer.play();
 
     let playTimer = setInterval(this.panViewportToTick, UPDATE_INTERVAL_MS);
 
@@ -154,21 +140,12 @@ class App extends Component {
 
   stopSong() {
     if (this.state.isPlaying) {
-      if (this.state.playbackMethod === "sample") {
-        this.state.samplePlayer.stop();
-      } else { // Don't yet have a good way to deschedule synth events
-               // This stops the synth from playing, but the events
-               // are still there, yet the synth can't be resumed.
-        this.state.synths.forEach(synth => {
-          synth.output.context.dispose();
-          synth.dispose();
-          //Master.dispose();
-        });
-      }
+
+      this.state.samplePlayer.stop();
 
       clearInterval(this.state.playTimer);
  
-      this.setState({isPlaying: false , synths: [], playTimer: null});
+      this.setState({isPlaying: false, playTimer: null});
     }
   }
 
@@ -196,30 +173,13 @@ class App extends Component {
   }
 
   updateVolumeSlider(event) {
-
     this.setState({volumeRatio: event.target.value});
-
-    this.state.synths.forEach(synth => {
-
-      // Synth volume is in decibels, so volume=0 is still audible.
-      // There are better ways to do this, but we probably won't
-      // be using synth sound anyway, so why bother.
-      synth.volume.value = SYNTH_VOLUME * event.target.value;
-
-    });
-
   }
 
   updateADSR(event) {
     let adsr = {...this.state.adsr};
     adsr[event.target.id] = event.target.value;
     this.setState({adsr});
-
-    if (this.state.playbackMethod !== "sample") {
-      this.state.synths.forEach(synth => {
-        synth.options.envelope = adsr;
-      });
-    }
   }
 
   /* SAMPLE-BASED PLAYBACK USING midi-player-js AND soundfont-player */
@@ -274,29 +234,41 @@ class App extends Component {
     let firstHolePx = 0;
     let lastHolePx = 0;
     let holeWidthPx = 0;
+    let baseTempo = null;
+    let earliestTempoTick = null;
+
     MidiSamplePlayer.events[0].forEach((event) => {
-      let text = event.string;
-      if (!text) return;
-      /* @IMAGE_WIDTH and @IMAGE_LENGTH should be the same as from viewport._contentSize
-       * Can't think of why they wouldn't be, but maybe check anyway. Would need to scale
-       * all pixel values if so.
-       * Other potentially useful values:
-       * @ROLL_WIDTH (this is smaller than the image width)
-       * @HARD_MARGIN_TREBLE
-       * @HARD_MARGIN_BASS
-       * @HOLE_SEPARATION
-       * @HOLE_OFFSET
-       * All of the source/performance/recording metadata is in this track as well.
-       */
-      if (text.startsWith('@FIRST_HOLE:')) {
-        firstHolePx = parseInt(text.split("\t")[2].replace("px",""));
-        //console.log("FIRST HOLE:",firstHolePx);
-      } else if (text.startsWith('@LAST_HOLE:')) {
-        lastHolePx = parseInt(text.split("\t")[2].replace("px",""));
-        //console.log("LAST HOLE:",lastHolePx);
-      } else if (text.startsWith('@AVG_HOLE_WIDTH:')) {
-        holeWidthPx = parseInt(text.split("\t")[1].replace("px",""));
-        //console.log("HOLE WIDTH:",holeWidthPx);
+      /* Tempo events *should* be in order, and the tempo *should* only ever
+       * increase... but we'll play it safe. */
+      if (event.name === "Set Tempo") {
+        if ((earliestTempoTick === null) || (event.tick < earliestTempoTick)) {
+          baseTempo = event.data;
+          earliestTempoTick = event.tick;
+        }
+      } else if (event.name === "Text Event") {
+        let text = event.string;
+        if (!text) return;
+        /* @IMAGE_WIDTH and @IMAGE_LENGTH should be the same as from viewport._contentSize
+        * Can't think of why they wouldn't be, but maybe check anyway. Would need to scale
+        * all pixel values if so.
+        * Other potentially useful values:
+        * @ROLL_WIDTH (this is smaller than the image width)
+        * @HARD_MARGIN_TREBLE
+        * @HARD_MARGIN_BASS
+        * @HOLE_SEPARATION
+        * @HOLE_OFFSET
+        * All of the source/performance/recording metadata is in this track as well.
+        */
+        if (text.startsWith('@FIRST_HOLE:')) {
+          firstHolePx = parseInt(text.split("\t")[2].replace("px",""));
+          //console.log("FIRST HOLE:",firstHolePx);
+        } else if (text.startsWith('@LAST_HOLE:')) {
+          lastHolePx = parseInt(text.split("\t")[2].replace("px",""));
+          //console.log("LAST HOLE:",lastHolePx);
+        } else if (text.startsWith('@AVG_HOLE_WIDTH:')) {
+          holeWidthPx = parseInt(text.split("\t")[1].replace("px",""));
+          //console.log("HOLE WIDTH:",holeWidthPx);
+        }
       }
     });
 
@@ -323,7 +295,7 @@ class App extends Component {
     } else {
       playLine.update(playPoint, OpenSeadragon.Placement.TOP_LEFT);
     }
-    this.setState({samplePlayer: MidiSamplePlayer, instrument: inst, totalTicks: MidiSamplePlayer.totalTicks, firstHolePx});
+    this.setState({samplePlayer: MidiSamplePlayer, instrument: inst, totalTicks: MidiSamplePlayer.totalTicks, firstHolePx, baseTempo});
     //console.log("TOTAL TICKS:",MidiSamplePlayer.totalTicks);
     //console.log("SONG TIME:",MidiSamplePlayer.getSongTime());
 
@@ -338,32 +310,30 @@ class App extends Component {
 
       const noteName = event.noteName;
       let noteVelocity = event.velocity;
+      let lastNotes = {...this.state.lastNotes};
 
-      /* XXX midi-player-js nullifies the velocity (volume) of any note that
-       * is repeated before its previous instance has ended, for some reason.
-       * Quick-fix hack for now is to assign it the same velocity as its
-       * previous instance. This needs to work better, obviously. */
       if (noteVelocity === 0) {
         if (noteName in this.state.lastNotes) {
-          let noteNode = this.state.lastNotes[noteName]
+          let noteNode = this.state.lastNotes[noteName];
           try {
             noteNode.stop();
           } catch {
             console.log("COULDN'T STOP NOTE, PROBABLY DUE TO WEIRD ADSR VALUES, RESETTING");
-            let lastNotes = {...this.state.lastNotes};
-            delete lastNotes[noteName];
-            this.setState({ lastNotes, adsr: ADSR_SAMPLE_DEFAULTS });
+            this.setState({ adsr: ADSR_SAMPLE_DEFAULTS });
           }
+          delete lastNotes[noteName];
         }
+        this.setState({ lastNotes });
       } else {
-        const updatedVolume = noteVelocity/100 * this.state.volumeRatio;
-        let lastNotes = Object.assign({}, this.state.lastNotes);
+        const updatedVolume = noteVelocity/100.0 * this.state.volumeRatio;
+        //let lastNotes = Object.assign({}, this.state.lastNotes);
         // Play a note -- can also set ADSR values in the opts, could be used to simulate pedaling
         try {
           let adsr = [this.state.adsr['attack'], this.state.adsr['decay'], this.state.adsr['sustain'], this.state.adsr['release']];
           let noteNode = this.state.instrument.play(noteName, this.state.ac.currentTime, { gain: updatedVolume, adsr });
           lastNotes[noteName] = noteNode;
         } catch {
+          // Get rid of this eventually
           console.log("IMPOSSIBLE ADSR VALUES FOR THIS NOTE, RESETTING");
           let adsr = [ADSR_SAMPLE_DEFAULTS['attack'], ADSR_SAMPLE_DEFAULTS['decay'], ADSR_SAMPLE_DEFAULTS['sustain'], ADSR_SAMPLE_DEFAULTS['release']];
           let noteNode = this.state.instrument.play(noteName, this.state.ac.currentTime, { gain: updatedVolume, adsr });
@@ -379,6 +349,11 @@ class App extends Component {
       
       this.state.samplePlayer.setTempo(playbackTempo);
       this.setState({speedupFactor: tempoRatio});
+    } else if (event.name === "Controller Change") {
+      // Controller Change number=64 is a sustain pedal event;
+      // 127 is down (on), 0 is up (off)
+      // 67 should be the soft (una corda) pedal
+    
     }
 
     this.panViewportToTick(event.tick);
@@ -391,11 +366,9 @@ class App extends Component {
     // Ideally they would only be prevented from doing so during playback.
     // Disable controls then, or just re-pan and zoom the viewer at each event?
 
-    // XXX Assumes we're only using the sample player -- which is a good assumption at this point
     if (isNaN(tick) || (tick === null)) {
       tick = this.state.samplePlayer.getCurrentTick();
     }
-
 
     //this.state.osdRef.current.openSeadragon.viewport.fitHorizontally(true);
     let viewportBounds = this.state.osdRef.current.openSeadragon.viewport.getBounds();
@@ -419,50 +392,6 @@ class App extends Component {
 
   }
 
-  /* SYNTH-BASED PLAYBACK USING tonejs/midi AND tonejs */
-  /* We're not likely to use this, but some of the ToneJS/midi
-   * functionality *may* come in handy when loading and manipulating
-   * MIDI data and events.
-   */
-
-  /* Alternate way of getting data for Tonejs -- not currently used */
-  getMidi(midiURL) {
-    Midi.fromUrl(midiURL)
-      .then(midiData => this.processMidi(midiData))
-      .catch((error) => console.log(error));
-  }
-
-  async loadMidi(midiBlob) {
-    return new Midi(await midiBlob.arrayBuffer());
-  }
-
-  synthMidi(midi) {
-
-    //this.setState({midi});
-  
-    //synth playback
-    const synths = [];
-    midi.tracks.forEach(track => {
-      //create a synth for each track
-      const synth = new PolySynth(Synth, {
-        envelope: this.state.adsr,
-        /*  attack: 0.02,
-          decay: 0.1,
-          sustain: 0.3,
-          release: 1
-        }, */
-        volume: SYNTH_VOLUME
-      });
-      synth.toDestination()
-      synths.push(synth);
-      //schedule all of the events
-      track.notes.forEach(note => {
-        synth.triggerAttackRelease(note.name, note.duration, note.time, note.velocity);
-      });
-    });
-    this.setState({synths});
-  }
-
   changeInstrument = e => {
     this.stopSong();
     this.setState({sampleInst: e.target.value});
@@ -474,18 +403,9 @@ class App extends Component {
     //const manifestUrl = "https://purl.stanford.edu/dj406yq6980/iiif/manifest";
     const imageUrl = "https://stacks.stanford.edu/image/iiif/dj406yq6980%252Fdj406yq6980_0001/info.json";
 
-    let changePlaybackMethod = e => {
-      this.stopSong();
-      let adsr = ADSR_SAMPLE_DEFAULTS;
-      if (e.target.id !== "sample") {
-        adsr = ADSR_SYNTH_DEFAULTS;
-      }
-      this.setState({ playbackMethod: e.target.id, adsr });
-    }
-
     let currentTime = (this.state.ac == null) ? 0 : this.state.ac.currentTime;
     let noteStats = "";
-    if (this.state.isPlaying && (this.state.playbackMethod === "sample")) {
+    if (this.state.isPlaying) {
       noteStats = <p>Note being played: {this.state.currentNote} at {currentTime}s, tick {this.state.currentTick}</p>;
     }
 
@@ -495,45 +415,19 @@ class App extends Component {
     let tempoControl = "";
     let volumeControl =  <div>Volume: {volumeSlider} {this.state.volumeRatio}</div>;
 
-    if (this.state.playbackMethod === "sample") {
-      tempoControl = <div>Tempo: {tempoSlider} {this.state.sliderTempo} bpm</div>;
-    }
+    tempoControl = <div>Tempo: {tempoSlider} {this.state.sliderTempo} bpm</div>;
 
     let pctRemaining = 100;
-    if (this.state.samplePlayer) {
+    if (this.state.samplePlayer !== null) {
       pctRemaining = this.state.samplePlayer.getSongPercentRemaining().toFixed(2);
     }
 
     return (
       <div className="App">
         <div>
-          <div>
-            Playback type:
-            <label htmlFor="sample" >
-              <input
-                type="checkbox"
-                name="sample"
-                id="sample"
-                onChange={changePlaybackMethod.bind(this)}
-                checked={this.state.playbackMethod === "sample"}
-              />
-              Samples
-            </label>
-
-            <label htmlFor="synth" >
-              <input
-                type="checkbox"
-                name="synth"
-                id="synth"
-                onChange={changePlaybackMethod.bind(this)}
-                checked={this.state.playbackMethod === "synth"}
-              />
-              Synthesis
-            </label>
-          </div>
           <button id="play" onClick={this.playSong}>Play</button>
           <button id="stop" onClick={this.stopSong}>Stop</button>
-          <div hidden={this.state.playbackMethod !== "sample"}>
+          <div>
             <label htmlFor="sampleInstrument">
               Sample instrument:{" "}
             </label>
@@ -550,7 +444,7 @@ class App extends Component {
               <option value="electric_piano_2">Electric 2</option>
             </select>
           </div>
-          <div style={{float: "right"}} hidden={this.state.playbackMethod !== "sample"}>ADSR envelope (experimental):
+          <div style={{float: "right"}}>ADSR envelope (experimental):
             <div>Attack: <input disabled type="range" min="0" max=".02" step=".01" value={this.state.adsr['attack']} className="slider" id="attack" onChange={this.updateADSR}/> {this.state.adsr['attack']}</div>
             <div>Decay: <input disabled type="range" min="0" max=".1" step=".01" value={this.state.adsr['decay']} className="slider" id="decay" onChange={this.updateADSR}/> {this.state.adsr['decay']}</div>
             <div>Sustain: <input type="range" min="0" max="5" step=".1" value={this.state.adsr['sustain']} className="slider" id="sustain" onChange={this.updateADSR}/> {this.state.adsr['sustain']}</div>
@@ -559,7 +453,7 @@ class App extends Component {
           {tempoControl}
           {volumeControl}
           {noteStats}
-          <div>Progress: <input hidden={this.state.playbackMethod !== "sample"} type="range" min="0" max="1" step=".01" value={this.state.currentProgress} className="slider" id="progress" onChange={this.skipTo}/> {(this.state.currentProgress * 100.).toFixed(2)+"%"}, {pctRemaining}% remaining </div>
+          <div>Progress: <input type="range" min="0" max="1" step=".01" value={this.state.currentProgress} className="slider" id="progress" onChange={this.skipTo}/> {(this.state.currentProgress * 100.).toFixed(2)+"%"}, {pctRemaining}% remaining </div>
         </div>
         <MultiViewer
           height="800px"
