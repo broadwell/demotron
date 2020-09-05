@@ -5,18 +5,18 @@ import MidiPlayer from "midi-player-js";
 import Soundfont from "soundfont-player";
 import MultiViewer from "./react-iiif-viewer/src/components/MultiViewer";
 import OpenSeadragon from 'openseadragon';
-import { Piano, KeyboardShortcuts, MidiNumbers } from 'react-piano';
+import { Piano, KeyboardShortcuts } from 'react-piano';
 import 'react-piano/dist/styles.css';
 
 const ADSR_SAMPLE_DEFAULTS = { attack: 0.01, decay: 0.1, sustain: 0.9, release: 0.3 };
-const UPDATE_INTERVAL_MS = 10;
+const UPDATE_INTERVAL_MS = 100;
 
 class App extends Component {
   constructor(props) {
     super(props);
 
     this.state = {
-      currentNote: "WAITING",
+      activeNotes: [], // For the piano viz; these should be MIDI numbers
       currentSong: null,
       samplePlayer: null,
       isPlaying: false, // Can also just check Player.isPlaying() (samples only)
@@ -35,7 +35,9 @@ class App extends Component {
       currentProgress: 0.0,
       osdRef: null,
       firstHolePx: 0,
-      playTimer: null
+      playTimer: null,
+      sustainPedalOn: false,
+      softPedalOn: false
     }
 
     this.midiEvent = this.midiEvent.bind(this);
@@ -50,6 +52,8 @@ class App extends Component {
     this.skipTo = this.skipTo.bind(this);
     this.getOSDref = this.getOSDref.bind(this);
     this.panViewportToTick = this.panViewportToTick.bind(this);
+    this.midiNotePlayer = this.midiNotePlayer.bind(this);
+    this.getNoteName = this.getNoteName.bind(this);
   }
 
   componentDidMount() {
@@ -145,7 +149,7 @@ class App extends Component {
 
       clearInterval(this.state.playTimer);
  
-      this.setState({isPlaying: false, playTimer: null});
+      this.setState({isPlaying: false, playTimer: null, lastNotes: {}, activeNotes: [] });
     }
   }
 
@@ -160,6 +164,7 @@ class App extends Component {
     if (this.state.isPlaying) {
       this.state.samplePlayer.stop();
       this.state.samplePlayer.skipToTick(targetTick);
+      this.setState({ lastNotes: {}, activeNotes: [] })
       this.state.samplePlayer.play();
     } else {
       this.state.samplePlayer.skipToTick(targetTick);
@@ -309,8 +314,10 @@ class App extends Component {
       //console.log(event);
 
       const noteName = event.noteName;
+      const noteNumber = event.noteNumber;
       let noteVelocity = event.velocity;
       let lastNotes = {...this.state.lastNotes};
+      let activeNotes = [...this.state.activeNotes];
 
       if (noteVelocity === 0) {
         if (noteName in this.state.lastNotes) {
@@ -323,7 +330,8 @@ class App extends Component {
           }
           delete lastNotes[noteName];
         }
-        this.setState({ lastNotes });
+        activeNotes.splice(activeNotes.indexOf(noteNumber), 1);
+        this.setState({ lastNotes, activeNotes });
       } else {
         const updatedVolume = noteVelocity/100.0 * this.state.volumeRatio;
         //let lastNotes = Object.assign({}, this.state.lastNotes);
@@ -340,7 +348,8 @@ class App extends Component {
           lastNotes[noteName] = noteNode;
           this.setState({adsr: ADSR_SAMPLE_DEFAULTS});
         }
-        this.setState({currentNote: noteName, lastNotes});
+        activeNotes.push(noteNumber);
+        this.setState({lastNotes, activeNotes});
       }
       
     } else if (event.name === "Set Tempo") {
@@ -352,8 +361,20 @@ class App extends Component {
     } else if (event.name === "Controller Change") {
       // Controller Change number=64 is a sustain pedal event;
       // 127 is down (on), 0 is up (off)
-      // 67 should be the soft (una corda) pedal
-    
+      if (event.number == 64) {
+        if (event.value == 127) {
+          this.setState({ sustainPedalOn: true });
+        } else if (event.value == 0) {
+          this.setState({ sustainPedalOn: false });
+        }
+      // 67 is the soft (una corda) pedal
+      } else if (event.number == 67) {
+        if (event.value == 127) {
+          this.setState({ softPedalOn: true });
+        } else if (event.value == 0) {
+          this.setState({ softPedalOn: false });
+        }
+      }
     }
 
     this.panViewportToTick(event.tick);
@@ -398,16 +419,45 @@ class App extends Component {
     Soundfont.instrument(this.state.ac, e.target.value, { soundfont: 'FluidR3_GM' }).then(this.initInstrument);
   }
 
+  midiNotePlayer(midiNote, trueIfOn) {
+    // XXX Need better behavior when keyboard is clicked during playback
+    if (this.state.isPlaying) {
+      return;
+    }
+    let lastNotes = {...this.state.lastNotes};
+    let activeNotes = [...this.state.activeNotes];
+    const noteName = this.getNoteName(midiNote);
+    if (trueIfOn) {
+      let noteNode = this.state.instrument.play(noteName, this.state.ac.currentTime, /*{ gain: updatedVolume, adsr }*/);
+      lastNotes[noteName] = noteNode;
+      activeNotes.push(midiNote);
+    } else {
+      let noteNode = lastNotes[noteName];
+      try {
+        noteNode.stop();
+        delete lastNotes[noteName];
+      } catch {
+        console.log("TRIED TO STOP NONEXISTENT NOTE");
+      }
+      activeNotes.splice(activeNotes.indexOf(midiNote), 1);
+    }
+    this.setState({ lastNotes, activeNotes });
+  }
+
+  getNoteName(midiNumber) {
+    const notes = ["A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#"];
+    const octave = parseInt(midiNumber / 12);
+    midiNumber -= 21;
+    const name = notes[midiNumber % 12];
+    return name + octave;
+}
+
   render() {
 
     //const manifestUrl = "https://purl.stanford.edu/dj406yq6980/iiif/manifest";
     const imageUrl = "https://stacks.stanford.edu/image/iiif/dj406yq6980%252Fdj406yq6980_0001/info.json";
 
     let currentTime = (this.state.ac == null) ? 0 : this.state.ac.currentTime;
-    let noteStats = "";
-    if (this.state.isPlaying) {
-      noteStats = <p>Note being played: {this.state.currentNote} at {currentTime}s, tick {this.state.currentTick}</p>;
-    }
 
     let tempoSlider = <input type="range" min="0" max="180" value={this.state.sliderTempo} className="slider" id="tempoSlider" onChange={this.updateTempoSlider} />;
     let volumeSlider = <input type="range" min="0" max="2" step=".1" value={this.state.volumeRatio} className="slider" id="tempoSlider" onChange={this.updateVolumeSlider} />;
@@ -417,10 +467,12 @@ class App extends Component {
 
     tempoControl = <div>Tempo: {tempoSlider} {this.state.sliderTempo} bpm</div>;
 
+    /*
     let pctRemaining = 100;
     if (this.state.samplePlayer !== null) {
       pctRemaining = this.state.samplePlayer.getSongPercentRemaining().toFixed(2);
     }
+    */
 
     return (
       <div className="App">
@@ -452,9 +504,23 @@ class App extends Component {
           </div>
           {tempoControl}
           {volumeControl}
-          {noteStats}
-          <div>Progress: <input type="range" min="0" max="1" step=".01" value={this.state.currentProgress} className="slider" id="progress" onChange={this.skipTo}/> {(this.state.currentProgress * 100.).toFixed(2)+"%"}, {pctRemaining}% remaining </div>
+          <div>Progress: <input type="range" min="0" max="1" step=".01" value={this.state.currentProgress} className="slider" id="progress" onChange={this.skipTo}/> {(this.state.currentProgress * 100.).toFixed(2)+"%"} </div>
         </div>
+        <Piano
+          noteRange={{ first: 21, last: 108 }}
+          playNote={(midiNumber) => {
+            this.midiNotePlayer(midiNumber, true);
+
+          }}
+          stopNote={(midiNumber) => {
+            this.midiNotePlayer(midiNumber, false);
+          }}
+          width={1000}
+          // keyboardShortcuts={keyboardShortcuts}
+          activeNotes={this.state.activeNotes}
+        />
+        SUSTAIN PEDAL {(this.state.sustainPedalOn ? "ON" : "OFF")}<br/>
+        SOFT PEDAL {(this.state.softPedalOn ? "ON" : "OFF")}
         <MultiViewer
           height="800px"
           width="500px"
