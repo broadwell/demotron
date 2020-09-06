@@ -21,12 +21,11 @@ class App extends Component {
     super(props);
 
     this.state = {
-      activeNotes: [], // For the piano viz; these should be MIDI numbers
-      currentSong: null,
+      activeNotes: [], // For the piano vis; these should be MIDI numbers
+      currentSong: null, // Song data in base64 format
       samplePlayer: null,
       playState: "stopped",
       instrument: null,
-      baseTempo: null,
       gainNode: null,
       adsr: ADSR_SAMPLE_DEFAULTS,
       totalTicks: 0,
@@ -35,14 +34,15 @@ class App extends Component {
       volumeRatio: 1.0,
       leftVolumeRatio: 1.0,
       rightVolumeRatio: 1.0,
+      baseTempo: null,
       tempoRatio: 1.0, // To keep track of gradual roll acceleration
       sliderTempo: 60.0,
       ac: null,
       currentTick: 0,
       currentProgress: 0.0,
       osdRef: null,
-      firstHolePx: 0,
-      playTimer: null,
+      firstHolePx: 0, // This + ticks = current pixel position
+      scrollTimer: null,
       sustainPedalOn: false,
       softPedalOn: false,
       sustainPedalLocked: false,
@@ -55,7 +55,6 @@ class App extends Component {
     this.playPauseSong = this.playPauseSong.bind(this);
     this.stopSong = this.stopSong.bind(this);
     this.initInstrument = this.initInstrument.bind(this);
-    this.dataURItoBlob = this.dataURItoBlob.bind(this);
     this.updateTempoSlider = this.updateTempoSlider.bind(this);
     this.updateVolumeSlider = this.updateVolumeSlider.bind(this);
     this.updateADSR = this.updateADSR.bind(this);
@@ -121,35 +120,14 @@ class App extends Component {
     */
   }
 
-  /* Converts MIDI data for use with Tonejs */
-  dataURItoBlob(dataURI) {
-    // convert base64/URLEncoded data component to raw binary data held in a string
-    var byteString;
-    if (dataURI.split(',')[0].indexOf('base64') >= 0)
-        byteString = atob(dataURI.split(',')[1]);
-    else
-        byteString = unescape(dataURI.split(',')[1]);
-  
-    // separate out the mime component
-    var mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
-  
-    // write the bytes of the string to a typed array
-    var ia = new Uint8Array(byteString.length);
-    for (var i = 0; i < byteString.length; i++) {
-        ia[i] = byteString.charCodeAt(i);
-    }
-  
-    return new Blob([ia], {type:mimeString});
-  }
-
   playPauseSong() {
 
     if (this.state.samplePlayer.isPlaying()) {
       this.state.samplePlayer.pause();
       this.setState({ playState: "paused" });
     } else {
-      let playTimer = setInterval(this.panViewportToTick, UPDATE_INTERVAL_MS);
-      this.setState({ playTimer, playState: "playing" });
+      let scrollTimer = setInterval(this.panViewportToTick, UPDATE_INTERVAL_MS);
+      this.setState({ scrollTimer, playState: "playing" });
       this.state.samplePlayer.play();
     }
   }
@@ -158,8 +136,8 @@ class App extends Component {
     if (this.state.samplePlayer.isPlaying()) {
 
       this.state.samplePlayer.stop();
-      clearInterval(this.state.playTimer);
-      this.setState({ playState: "stopped", playTimer: null, lastNotes: {}, activeNotes: [], sustainedNotes: {} });
+      clearInterval(this.state.scrollTimer);
+      this.setState({ playState: "stopped", scrollTimer: null, lastNotes: {}, activeNotes: [], sustainedNotes: {} });
     }
   }
 
@@ -588,9 +566,9 @@ class App extends Component {
             <div>Release: <input disabled type="range" min="0" max="1" step=".1" value={this.state.adsr['release']} className="slider" id="release" onChange={this.updateADSR}/> {this.state.adsr['release']}</div>          
           </div>
           <div>Tempo: <input type="range" min="0" max="180" value={this.state.sliderTempo} className="slider" id="tempoSlider" onChange={this.updateTempoSlider} /> {this.state.sliderTempo} bpm</div>
-          <div>Master Volume: <input type="range" min="0" max="2" step=".1" value={this.state.volumeRatio} className="slider" id="masterVolumeSlider" name="volume" onChange={this.updateVolumeSlider} /> {this.state.volumeRatio}</div>
-          <div>Left Volume: <input type="range" min="0" max="2" step=".1" value={this.state.leftVolumeRatio} className="slider" id="leftVolumeSlider" name="left" onChange={this.updateVolumeSlider} /> {this.state.leftVolumeRatio}</div>
-          <div>Right Volume: <input type="range" min="0" max="2" step=".1" value={this.state.rightVolumeRatio} className="slider" id="rightVolumeSlider" name="right" onChange={this.updateVolumeSlider} /> {this.state.rightVolumeRatio}</div>
+          <div>Master Volume: <input type="range" min="0" max="4" step=".1" value={this.state.volumeRatio} className="slider" id="masterVolumeSlider" name="volume" onChange={this.updateVolumeSlider} /> {this.state.volumeRatio}</div>
+          <div>Left Volume: <input type="range" min="0" max="4" step=".1" value={this.state.leftVolumeRatio} className="slider" id="leftVolumeSlider" name="left" onChange={this.updateVolumeSlider} /> {this.state.leftVolumeRatio}</div>
+          <div>Right Volume: <input type="range" min="0" max="4" step=".1" value={this.state.rightVolumeRatio} className="slider" id="rightVolumeSlider" name="right" onChange={this.updateVolumeSlider} /> {this.state.rightVolumeRatio}</div>
           <div>Progress: <input type="range" min="0" max="1" step=".01" value={this.state.currentProgress} className="slider" id="progress" onChange={this.skipTo}/> {(this.state.currentProgress * 100.).toFixed(2)+"%"} </div>
         </div>
         <Piano
