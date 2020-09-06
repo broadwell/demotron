@@ -13,6 +13,8 @@ const UPDATE_INTERVAL_MS = 100;
 const SHARP_NOTES = ["A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#"];
 const FLAT_NOTES = ["A", "Bb", "B", "C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab"];
 const SOFT_PEDAL_RATIO = .67;
+const HALF_BOUNDARY = 65; // F above Middle C; splits the keyboard into two "pans"
+const imageUrl = "https://stacks.stanford.edu/image/iiif/dj406yq6980%252Fdj406yq6980_0001/info.json";
 
 class App extends Component {
   constructor(props) {
@@ -30,7 +32,9 @@ class App extends Component {
       totalTicks: 0,
       sampleInst: 'acoustic_grand_piano',
       lastNotes: {}, // To handle velocity=0 "note off" events
-      volumeRatio : 1.0,
+      volumeRatio: 1.0,
+      leftVolumeRatio: 1.0,
+      rightVolumeRatio: 1.0,
       tempoRatio: 1.0, // To keep track of gradual roll acceleration
       sliderTempo: 60.0,
       ac: null,
@@ -184,7 +188,16 @@ class App extends Component {
   }
 
   updateVolumeSlider(event) {
-    this.setState({volumeRatio: event.target.value});
+
+    let sliderName = event.target.name;
+
+    if (sliderName === "volume") {
+      this.setState({volumeRatio: event.target.value});
+    } else if (sliderName === "left") {
+      this.setState({leftVolumeRatio: event.target.value});
+    } else if (sliderName === "right") {
+      this.setState({rightVolumeRatio: event.target.value});
+    }
   }
 
   updateADSR(event) {
@@ -342,6 +355,11 @@ class App extends Component {
         let updatedVolume = noteVelocity/100.0 * this.state.volumeRatio;
         if (this.state.softPedalOn) {
           updatedVolume *= SOFT_PEDAL_RATIO;
+        }
+        if (noteNumber < HALF_BOUNDARY) {
+          updatedVolume *= this.state.leftVolumeRatio;
+        } else if (noteNumber >= HALF_BOUNDARY) {
+          updatedVolume *= this.state.rightVolumeRatio;
         }
         //let lastNotes = Object.assign({}, this.state.lastNotes);
         // Play a note -- can also set ADSR values in the opts, could be used to simulate pedaling
@@ -532,17 +550,7 @@ class App extends Component {
   render() {
 
     //const manifestUrl = "https://purl.stanford.edu/dj406yq6980/iiif/manifest";
-    const imageUrl = "https://stacks.stanford.edu/image/iiif/dj406yq6980%252Fdj406yq6980_0001/info.json";
-
     //let currentTime = (this.state.ac == null) ? 0 : this.state.ac.currentTime;
-
-    let tempoSlider = <input type="range" min="0" max="180" value={this.state.sliderTempo} className="slider" id="tempoSlider" onChange={this.updateTempoSlider} />;
-    let volumeSlider = <input type="range" min="0" max="2" step=".1" value={this.state.volumeRatio} className="slider" id="tempoSlider" onChange={this.updateVolumeSlider} />;
-
-    let tempoControl = "";
-    let volumeControl =  <div>Volume: {volumeSlider} {this.state.volumeRatio}</div>;
-
-    tempoControl = <div>Tempo: {tempoSlider} {this.state.sliderTempo} bpm</div>;
 
     /*
     let pctRemaining = 100;
@@ -579,8 +587,10 @@ class App extends Component {
             <div>Sustain: <input type="range" min="0" max="5" step=".1" value={this.state.adsr['sustain']} className="slider" id="sustain" onChange={this.updateADSR}/> {this.state.adsr['sustain']}</div>
             <div>Release: <input disabled type="range" min="0" max="1" step=".1" value={this.state.adsr['release']} className="slider" id="release" onChange={this.updateADSR}/> {this.state.adsr['release']}</div>          
           </div>
-          {tempoControl}
-          {volumeControl}
+          <div>Tempo: <input type="range" min="0" max="180" value={this.state.sliderTempo} className="slider" id="tempoSlider" onChange={this.updateTempoSlider} /> {this.state.sliderTempo} bpm</div>
+          <div>Master Volume: <input type="range" min="0" max="2" step=".1" value={this.state.volumeRatio} className="slider" id="masterVolumeSlider" name="volume" onChange={this.updateVolumeSlider} /> {this.state.volumeRatio}</div>
+          <div>Left Volume: <input type="range" min="0" max="2" step=".1" value={this.state.leftVolumeRatio} className="slider" id="leftVolumeSlider" name="left" onChange={this.updateVolumeSlider} /> {this.state.leftVolumeRatio}</div>
+          <div>Right Volume: <input type="range" min="0" max="2" step=".1" value={this.state.rightVolumeRatio} className="slider" id="rightVolumeSlider" name="right" onChange={this.updateVolumeSlider} /> {this.state.rightVolumeRatio}</div>
           <div>Progress: <input type="range" min="0" max="1" step=".01" value={this.state.currentProgress} className="slider" id="progress" onChange={this.skipTo}/> {(this.state.currentProgress * 100.).toFixed(2)+"%"} </div>
         </div>
         <Piano
@@ -597,7 +607,6 @@ class App extends Component {
         />
         <button id="soft_pedal" name="soft" onClick={this.togglePedalLock} style={{background: (this.state.softPedalOn ? "lightblue" : "white")}}>SOFT</button>
         <button id="sustain_pedal" name="sustain" onClick={this.togglePedalLock} style={{background: (this.state.sustainPedalOn ? "lightblue" : "white")}}>SUST</button>
-        
         <MultiViewer
           height="800px"
           width="500px"
