@@ -307,57 +307,14 @@ class App extends Component {
     // Do something when a MIDI event is fired.
     // (this is the same as passing a function to MidiPlayer.Player() when instantiating).
     if (event.name === 'Note on') {
-      //console.log("NOTE ON EVENT AT", this.state.ac.currentTime, event.tick);
-      //console.log(event);
 
-      const noteName = event.noteName;
       const noteNumber = event.noteNumber;
-      let noteVelocity = event.velocity;
-      let lastNotes = {...this.state.lastNotes};
-      let activeNotes = [...this.state.activeNotes];
-      let sustainedNotes = {...this.state.sustainedNotes};
 
-      if (noteVelocity === 0) {
-        if ((noteName in this.state.lastNotes) && (!(noteName in this.state.sustainedNotes))) {
-          try {
-            this.state.lastNotes[noteName].stop();
-          } catch {
-            console.log("COULDN'T STOP NOTE, PROBABLY DUE TO WEIRD ADSR VALUES, RESETTING");
-            this.setState({ adsr: ADSR_SAMPLE_DEFAULTS });
-          }
-          delete lastNotes[noteName];
-        }
-        activeNotes.splice(activeNotes.indexOf(noteNumber), 1);
-        this.setState({ lastNotes, activeNotes });
+      if (event.velocity === 0) {
+        this.midiNotePlayer(noteNumber, false);
       } else {
-        let updatedVolume = noteVelocity/100.0 * this.state.volumeRatio;
-        if (this.state.softPedalOn) {
-          updatedVolume *= SOFT_PEDAL_RATIO;
-        }
-        if (noteNumber < HALF_BOUNDARY) {
-          updatedVolume *= this.state.leftVolumeRatio;
-        } else if (noteNumber >= HALF_BOUNDARY) {
-          updatedVolume *= this.state.rightVolumeRatio;
-        }
-        //let lastNotes = Object.assign({}, this.state.lastNotes);
         // Play a note -- can also set ADSR values in the opts, could be used to simulate pedaling
-        try {
-          let adsr = [this.state.adsr['attack'], this.state.adsr['decay'], this.state.adsr['sustain'], this.state.adsr['release']];
-          let noteNode = this.state.instrument.play(noteName, this.state.ac.currentTime, { gain: updatedVolume, adsr });
-          if (this.state.sustainPedalOn) {
-            sustainedNotes[noteName] = noteNode;
-          }
-          lastNotes[noteName] = noteNode;
-        } catch {
-          // Get rid of this eventually
-          console.log("IMPOSSIBLE ADSR VALUES FOR THIS NOTE, RESETTING");
-          let adsr = [ADSR_SAMPLE_DEFAULTS['attack'], ADSR_SAMPLE_DEFAULTS['decay'], ADSR_SAMPLE_DEFAULTS['sustain'], ADSR_SAMPLE_DEFAULTS['release']];
-          let noteNode = this.state.instrument.play(noteName, this.state.ac.currentTime, { gain: updatedVolume, adsr });
-          lastNotes[noteName] = noteNode;
-          this.setState({adsr: ADSR_SAMPLE_DEFAULTS});
-        }
-        activeNotes.push(noteNumber);
-        this.setState({lastNotes, activeNotes, sustainedNotes});
+        this.midiNotePlayer(noteNumber, true, event.velocity);
       }
     } else if (event.name === "Controller Change") {
       // Controller Change number=64 is a sustain pedal event;
@@ -456,29 +413,59 @@ class App extends Component {
     Soundfont.instrument(this.state.ac, e.target.value, { soundfont: 'FluidR3_GM' }).then(this.initInstrument);
   }
 
-  midiNotePlayer(midiNote, trueIfOn) {
-    // XXX Need better behavior when keyboard is clicked during playback
-    if (this.state.samplePlayer.isPlaying()) {
-      return;
-    }
+  midiNotePlayer(noteNumber, trueIfOn, velocity) {
     let lastNotes = {...this.state.lastNotes};
     let activeNotes = [...this.state.activeNotes];
-    const noteName = this.getNoteName(midiNote);
+    let sustainedNotes = {...this.state.sustainedNotes};
+    let noteName = this.getNoteName(noteNumber);
     if (trueIfOn) {
-      let noteNode = this.state.instrument.play(noteName, this.state.ac.currentTime, /*{ gain: updatedVolume, adsr }*/);
-      lastNotes[noteName] = noteNode;
-      activeNotes.push(midiNote);
-    } else {
-      let noteNode = lastNotes[noteName];
-      try {
-        noteNode.stop();
-        delete lastNotes[noteName];
-      } catch {
-        console.log("TRIED TO STOP NONEXISTENT NOTE");
+      if (activeNotes.includes(noteNumber)) {
+        return;
       }
-      activeNotes.splice(activeNotes.indexOf(midiNote), 1);
+      if (typeof(velocity) === 'undefined') {
+        velocity = 33.0
+      }
+      let updatedVolume = velocity/100.0 * this.state.volumeRatio;
+      if (this.state.softPedalOn) {
+        updatedVolume *= SOFT_PEDAL_RATIO;
+      }
+      if (noteNumber < HALF_BOUNDARY) {
+        updatedVolume *= this.state.leftVolumeRatio;
+      } else if (noteNumber >= HALF_BOUNDARY) {
+        updatedVolume *= this.state.rightVolumeRatio;
+      }
+      try {
+        let adsr = [this.state.adsr['attack'], this.state.adsr['decay'], this.state.adsr['sustain'], this.state.adsr['release']];
+        let noteNode = this.state.instrument.play(noteName, this.state.ac.currentTime, { gain: updatedVolume, adsr });
+        if (this.state.sustainPedalOn) {
+          sustainedNotes[noteName] = noteNode;
+        }
+        lastNotes[noteName] = noteNode;
+      } catch {
+        // Get rid of this eventually
+        console.log("IMPOSSIBLE ADSR VALUES FOR THIS NOTE, RESETTING");
+        let adsr = [ADSR_SAMPLE_DEFAULTS['attack'], ADSR_SAMPLE_DEFAULTS['decay'], ADSR_SAMPLE_DEFAULTS['sustain'], ADSR_SAMPLE_DEFAULTS['release']];
+        let noteNode = this.state.instrument.play(noteName, this.state.ac.currentTime, { gain: updatedVolume, adsr });
+        this.setState({adsr: ADSR_SAMPLE_DEFAULTS});
+        lastNotes[noteName] = noteNode;
+      }
+      activeNotes.push(noteNumber);
+      this.setState({lastNotes, activeNotes, sustainedNotes});
+    } else {
+      if ((noteName in this.state.lastNotes) && (!(noteName in this.state.sustainedNotes))) {
+        let noteNode = lastNotes[noteName];
+        try {
+          noteNode.stop();
+          delete lastNotes[noteName];
+        } catch {
+          console.log("TRIED TO STOP NONEXISTENT NOTE");
+        }
+      }
+      while (activeNotes.includes(noteNumber)) {
+        activeNotes.splice(activeNotes.indexOf(noteNumber), 1);
+      }
+      this.setState({ lastNotes, activeNotes });
     }
-    this.setState({ lastNotes, activeNotes });
   }
 
   getNoteName(midiNumber) {
@@ -573,11 +560,11 @@ class App extends Component {
         </div>
         <Piano
           noteRange={{ first: 21, last: 108 }}
-          playNote={(midiNumber) => {
-            this.midiNotePlayer(midiNumber, true);
+          playNote={(noteNumber) => {
+            this.midiNotePlayer(noteNumber, true);
           }}
-          stopNote={(midiNumber) => {
-            this.midiNotePlayer(midiNumber, false);
+          stopNote={(noteNumber) => {
+            this.midiNotePlayer(noteNumber, false);
           }}
           width={1000}
           // keyboardShortcuts={keyboardShortcuts}
