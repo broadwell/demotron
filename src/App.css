@@ -37,6 +37,16 @@
   }
 }
 
+.openseadragon-container:after {
+  display: block;
+  content: '';
+  position: absolute;
+  width: 100%;
+  height: 1px;
+  background: red;
+  top: 52%;
+  left: 0;
+}
 
 #play-line{
   background-color:blue;

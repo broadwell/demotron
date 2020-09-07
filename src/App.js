@@ -54,7 +54,7 @@ class App extends Component {
     this.changeInstrument = this.changeInstrument.bind(this);
     this.playPauseSong = this.playPauseSong.bind(this);
     this.stopSong = this.stopSong.bind(this);
-    this.initInstrument = this.initInstrument.bind(this);
+    this.initPlayer = this.initPlayer.bind(this);
     this.updateTempoSlider = this.updateTempoSlider.bind(this);
     this.updateVolumeSlider = this.updateVolumeSlider.bind(this);
     this.updateADSR = this.updateADSR.bind(this);
@@ -90,8 +90,8 @@ class App extends Component {
     // It's possible to load a local soundfont via the soundfont-player,
     // sample-player, audio-loader toolchain. This is much easier to do
     // if the soundfont is in Midi.js format
-    Soundfont.instrument(ac, this.state.sampleInst, { soundfont: 'MusyngKite' }).then(this.initInstrument);
-    //Soundfont.instrument(ac, "http://localhost/~pmb/demotron/salamander_acoustic_grand-mod-ogg.js" ).then(this.initInstrument);
+    Soundfont.instrument(ac, this.state.sampleInst, { soundfont: 'MusyngKite' }).then(this.initPlayer);
+    //Soundfont.instrument(ac, "http://localhost/~pmb/demotron/salamander_acoustic_grand-mod-ogg.js" ).then(this.initPlayer);
   }
 
   getOSDref(osdRef) {
@@ -186,7 +186,7 @@ class App extends Component {
 
   /* SAMPLE-BASED PLAYBACK USING midi-player-js AND soundfont-player */
 
-  initInstrument(inst) {
+  initPlayer(inst) {
 
     /* Instantiate the MIDI player */
     let MidiSamplePlayer = new MidiPlayer.Player();
@@ -289,6 +289,11 @@ class App extends Component {
     let playPoint = new OpenSeadragon.Point(0, viewportBounds.y + (viewportBounds.height / 2.0));
     //console.log(playPoint);
 
+    /*
+    // Play line can be drawn via CSS (though not as accurately), but very
+    // similar code to this would be used to show other overlays, e.g., to
+    // "fill" in actively playing notes and other mechanics. Performance is
+    // an issue, though.
     let playLine = this.state.osdRef.current.openSeadragon.viewport.viewer.getOverlayById('play-line');
     if (!playLine) {
       playLine = document.createElement("div");
@@ -297,6 +302,7 @@ class App extends Component {
     } else {
       playLine.update(playPoint, OpenSeadragon.Placement.TOP_LEFT);
     }
+    */
     this.setState({samplePlayer: MidiSamplePlayer, instrument: inst, totalTicks: MidiSamplePlayer.totalTicks, firstHolePx, baseTempo});
     //console.log("TOTAL TICKS:",MidiSamplePlayer.totalTicks);
     //console.log("SONG TIME:",MidiSamplePlayer.getSongTime());
@@ -310,8 +316,9 @@ class App extends Component {
       //console.log("NOTE ON EVENT AT", this.state.ac.currentTime, event.tick);
       //console.log(event);
 
-      const noteName = event.noteName;
+      //const noteName = event.noteName;
       const noteNumber = event.noteNumber;
+      const noteName = this.getNoteName(noteNumber);
       let noteVelocity = event.velocity;
       let lastNotes = {...this.state.lastNotes};
       let activeNotes = [...this.state.activeNotes];
@@ -327,7 +334,9 @@ class App extends Component {
           }
           delete lastNotes[noteName];
         }
-        activeNotes.splice(activeNotes.indexOf(noteNumber), 1);
+        while(activeNotes.includes(noteNumber)) {
+          activeNotes.splice(activeNotes.indexOf(noteNumber), 1);
+        }
         this.setState({ lastNotes, activeNotes });
       } else {
         let updatedVolume = noteVelocity/100.0 * this.state.volumeRatio;
@@ -394,8 +403,6 @@ class App extends Component {
       this.state.activeNotes.forEach((noteNumber) => {
         const noteName = this.getNoteName(noteNumber);
         sustainedNotes[noteName] = this.state.lastNotes[noteName];
-        // XXX Why are so many of these undefined?
-        //console.log("SUSTAINING",noteName,sustainedNotes[noteName]);
       });
       this.setState({ sustainPedalOn: true, sustainedNotes });
     } else {
@@ -406,7 +413,6 @@ class App extends Component {
         }
         let noteNumber = this.getMidiNumber(noteName);
         if (!(this.state.activeNotes.includes(noteNumber))) {
-          //console.log("RELEASING",noteName,this.state.sustainedNotes[noteName]);
           // XXX Maybe use a slower release velocity for pedal events?
           if (typeof(this.state.sustainedNotes[noteName].stop === 'function')) {
             this.state.sustainedNotes[noteName].stop();
@@ -440,9 +446,8 @@ class App extends Component {
     let lineCenter = new OpenSeadragon.Point(viewportBounds.width / 2.0, lineViewport.y);
     this.state.osdRef.current.openSeadragon.viewport.panTo(lineCenter);
 
-    let playLine = this.state.osdRef.current.openSeadragon.viewport.viewer.getOverlayById('play-line');
-
-    playLine.update(lineViewport, OpenSeadragon.Placement.TOP_LEFT);
+    //let playLine = this.state.osdRef.current.openSeadragon.viewport.viewer.getOverlayById('play-line');
+    //playLine.update(lineViewport, OpenSeadragon.Placement.TOP_LEFT);
 
     let currentProgress = parseFloat(tick) / this.state.totalTicks;
 
@@ -451,32 +456,45 @@ class App extends Component {
   }
 
   changeInstrument(e) {
-    this.stopSong();
-    this.setState({sampleInst: e.target.value});
-    Soundfont.instrument(this.state.ac, e.target.value, { soundfont: 'FluidR3_GM' }).then(this.initInstrument);
+    const newInstName = e.target.value;
+
+    // XXX This mostly works, except that when switching back to the
+    // acoustic_grand_piano, the bright_acoustic_piano plays instead.
+    // Possibly this problem is rooted in how the soundfonts are
+    // defined, i.e., if the bright_acoustic is just a modification of
+    // the samples in acoustic_grand, the system may erroneously
+    // assume they're the same...
+    Soundfont.instrument(this.state.ac, newInstName, { soundfont: 'FluidR3_GM' }).then(
+      (instrument) => this.setState({ instrument, sampleInst: newInstName }));
   }
 
-  midiNotePlayer(midiNote, trueIfOn) {
+  midiNotePlayer(midiNote, trueIfOn, fromInput) {
     // XXX Need better behavior when keyboard is clicked during playback
-    if (this.state.samplePlayer.isPlaying()) {
+    if ((this.state.playState === "playing") && (!fromInput)) {
       return;
     }
     let lastNotes = {...this.state.lastNotes};
     let activeNotes = [...this.state.activeNotes];
     const noteName = this.getNoteName(midiNote);
     if (trueIfOn) {
-      let noteNode = this.state.instrument.play(noteName, this.state.ac.currentTime, /*{ gain: updatedVolume, adsr }*/);
+      if (activeNotes.includes(midiNote)) {
+        console.log("DUPLICATE NOTE PLAY",midiNote);
+        return;
+      }
+      let noteNode = this.state.instrument.play(noteName, this.state.ac.currentTime/*, { gain: updatedVolume, adsr }*/);
       lastNotes[noteName] = noteNode;
       activeNotes.push(midiNote);
     } else {
       let noteNode = lastNotes[noteName];
       try {
         noteNode.stop();
-        delete lastNotes[noteName];
       } catch {
-        console.log("TRIED TO STOP NONEXISTENT NOTE");
+        console.log("TRIED TO STOP NONEXISTENT NOTE",midiNote);
       }
-      activeNotes.splice(activeNotes.indexOf(midiNote), 1);
+      delete lastNotes[noteName];
+      while (activeNotes.includes(midiNote)) {
+        activeNotes.splice(activeNotes.indexOf(midiNote), 1);
+      }
     }
     this.setState({ lastNotes, activeNotes });
   }
@@ -574,12 +592,18 @@ class App extends Component {
         <Piano
           noteRange={{ first: 21, last: 108 }}
           playNote={(midiNumber) => {
-            this.midiNotePlayer(midiNumber, true);
+            this.midiNotePlayer(midiNumber, true, false);
           }}
           stopNote={(midiNumber) => {
-            this.midiNotePlayer(midiNumber, false);
+            this.midiNotePlayer(midiNumber, false, false);
           }}
           width={1000}
+          onPlayNoteInput={(midiNumber, { prevActiveNotes }) => {
+            this.midiNotePlayer(midiNumber, true, true);
+          }}
+          onStopNoteInput={(midiNumber, { prevActiveNotes }) => {
+            this.midiNotePlayer(midiNumber, false, true);
+          }}
           // keyboardShortcuts={keyboardShortcuts}
           activeNotes={this.state.activeNotes}
         />
