@@ -49,7 +49,8 @@ class App extends Component {
       softPedalOn: false,
       sustainPedalLocked: false,
       softPedalLocked: false,
-      sustainedNotes: {}
+      sustainedNotes: {},
+      homeZoom: null
     }
 
     this.midiEvent = this.midiEvent.bind(this);
@@ -132,8 +133,10 @@ class App extends Component {
 
     if (this.state.samplePlayer.isPlaying()) {
       this.state.samplePlayer.pause();
-      this.setState({ playState: "paused" });
+      clearInterval(this.state.scrollTimer);
+      this.setState({ playState: "paused", scrollTimer: null });
     } else {
+      this.state.osdRef.current.openSeadragon.viewport.zoomTo(this.state.homeZoom);
       let scrollTimer = setInterval(this.panViewportToTick, UPDATE_INTERVAL_MS);
       this.setState({ scrollTimer, playState: "playing" });
       this.state.samplePlayer.play();
@@ -145,13 +148,13 @@ class App extends Component {
 
       this.state.samplePlayer.stop();
       clearInterval(this.state.scrollTimer);
-      this.setState({ playState: "stopped", currentTick: 0, scrollTimer: null, lastNotes: {}, activeNotes: [], sustainedNotes: {} });
+      this.setState({ playState: "stopped", scrollTimer: null, lastNotes: {}, activeNotes: [], sustainedNotes: {} });
       this.panViewportToTick(0);
     }
   }
 
   skipToPixel(yPixel) {
-    const targetTick = Math.max(0,yPixel - this.state.firstHolePx);
+    const targetTick = yPixel - this.state.firstHolePx;
     const targetProgress = parseFloat(targetTick) / parseFloat(this.state.totalTicks);
 
     this.skipTo(targetTick, targetProgress)
@@ -168,14 +171,20 @@ class App extends Component {
     if (!this.state.samplePlayer) {
       return;
     }
-    this.setState({currentProgress: targetProgress});
+    // XXX The notes should sort themselves out, but the wrong pedals will
+    // possibly be on (and stay on) after skipping around a roll. The best
+    // (probably only) way to fix this is to look backwards in the event
+    // sequence, or ideally build a complete timeline of pedal actions
+    // before playback.
+    let playTick = Math.max(0, targetTick);
+    let playProgress = Math.max(0, targetProgress);
     if (this.state.samplePlayer.isPlaying()) {
       this.state.samplePlayer.pause();
-      this.state.samplePlayer.skipToTick(targetTick);
-      this.setState({ lastNotes: {}, activeNotes: [], sustainedNotes: {} });
+      this.state.samplePlayer.skipToTick(playTick);
+      this.setState({ lastNotes: {}, activeNotes: [], sustainedNotes: {}, currentProgress: playProgress  });
       this.state.samplePlayer.play();
     } else {
-      this.state.samplePlayer.skipToTick(targetTick);
+      //this.state.samplePlayer.skipToTick(playTick);
       this.panViewportToTick(targetTick);
     }
   }
@@ -305,9 +314,12 @@ class App extends Component {
     let bounds = new OpenSeadragon.Rect(0.0,firstLineViewport.y - (viewportBounds.height / 2.0),viewportBounds.width, viewportBounds.height);
     this.state.osdRef.current.openSeadragon.viewport.fitBounds(bounds, true);
 
-    viewportBounds = this.state.osdRef.current.openSeadragon.viewport.getBounds();
+    let startBounds = this.state.osdRef.current.openSeadragon.viewport.getBounds();
+
+    let homeZoom = this.state.osdRef.current.openSeadragon.viewport.getZoom();
+    
     //console.log("UPDATED BOUNDS",viewportBounds);
-    let playPoint = new OpenSeadragon.Point(0, viewportBounds.y + (viewportBounds.height / 2.0));
+    let playPoint = new OpenSeadragon.Point(0, startBounds.y + (startBounds.height / 2.0));
     //console.log(playPoint);
 
     /*
@@ -324,7 +336,7 @@ class App extends Component {
       playLine.update(playPoint, OpenSeadragon.Placement.TOP_LEFT);
     }
     */
-    this.setState({samplePlayer: MidiSamplePlayer, instrument: inst, totalTicks: MidiSamplePlayer.totalTicks, firstHolePx, baseTempo});
+    this.setState({samplePlayer: MidiSamplePlayer, instrument: inst, totalTicks: MidiSamplePlayer.totalTicks, firstHolePx, baseTempo, homeZoom});
     //console.log("TOTAL TICKS:",MidiSamplePlayer.totalTicks);
     //console.log("SONG TIME:",MidiSamplePlayer.getSongTime());
 
@@ -414,7 +426,11 @@ class App extends Component {
       this.setState({speedupFactor: tempoRatio});
     }
 
-    this.panViewportToTick(event.tick);
+    // The scrollTimer should ensure that the roll is synchronized with
+    // playback; syncing at every note effect also can cause problems
+    // on certain browsers if the playback events start to lag behind
+    // their scheduled times.
+    //this.panViewportToTick(event.tick);
 
   }
 
@@ -452,11 +468,10 @@ class App extends Component {
 
   panViewportToTick(tick) {
     /* PAN VIEWPORT IMAGE */
-    // Do we want to prevent user from panning/zooming image?
-    // Ideally they would only be prevented from doing so during playback.
-    // Disable controls then, or just re-pan and zoom the viewer at each event?
 
-    if (isNaN(tick) || (tick === null)) {
+    // If this is fired from the scrollTimer event (quite likely) the tick
+    // argument will be undefined, so we get it from the 
+    if ((typeof(tick) === 'undefined') || isNaN(tick) || (tick === null)) {
       tick = this.state.samplePlayer.getCurrentTick();
     }
 
@@ -475,9 +490,11 @@ class App extends Component {
     //let playLine = this.state.osdRef.current.openSeadragon.viewport.viewer.getOverlayById('play-line');
     //playLine.update(lineViewport, OpenSeadragon.Placement.TOP_LEFT);
 
-    let currentProgress = parseFloat(tick) / this.state.totalTicks;
+    let targetProgress = parseFloat(tick) / this.state.totalTicks;
+    let playProgress = Math.max(0, targetProgress);
+    let playTick = Math.max(0, tick);
 
-    this.setState({currentTick: tick, currentProgress});
+    this.setState({currentTick: playTick, currentProgress: playProgress});
 
   }
 
