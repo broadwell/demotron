@@ -184,7 +184,7 @@ class App extends Component {
       this.setState({ lastNotes: {}, activeNotes: [], sustainedNotes: {}, currentProgress: playProgress  });
       this.state.samplePlayer.play();
     } else {
-      //this.state.samplePlayer.skipToTick(playTick);
+      this.state.samplePlayer.skipToTick(playTick);
       this.panViewportToTick(targetTick);
     }
   }
@@ -511,15 +511,12 @@ class App extends Component {
       (instrument) => this.setState({ instrument, sampleInst: newInstName }));
   }
 
-  midiNotePlayer(noteNumber, trueIfOn, fromInput) {
-    if ((this.state.playing !== "playing") && (!fromInput)) {
-      return;
-    }
-    let lastNotes = {...this.state.lastNotes};
-    let activeNotes = [...this.state.activeNotes];
-    const noteName = this.getNoteName(noteNumber);
-
+  midiNotePlayer(noteNumber, trueIfOn, prevActiveNotes) {
     //console.log("MANUAL NOTE",noteNumber,"ON",trueIfOn);
+    //console.log("PREVIOUS ACTIVE NOTES",prevActiveNotes);
+
+    let lastNotes = {...this.state.lastNotes};
+    const noteName = this.getNoteName(noteNumber);
 
     if (trueIfOn) {
       let updatedVolume = DEFAULT_NOTE_VELOCITY/100.0 * this.state.volumeRatio;
@@ -531,26 +528,24 @@ class App extends Component {
       } else if (noteNumber >= HALF_BOUNDARY) {
         updatedVolume *= this.state.rightVolumeRatio;
       }
-      if (activeNotes.includes(noteNumber)) {
-        console.log("DUPLICATE NOTE PLAY",noteNumber);
-        return;
-      }
       let noteNode = this.state.instrument.play(noteName, this.state.ac.currentTime, {gain: updatedVolume, adsr: this.state.adsr });
       lastNotes[noteName] = noteNode;
-      activeNotes.push(noteNumber);
     } else {
+      // XXX This does not work as currently configured -- stop() call always
+      // fails, and the note just eventually times/decays out rather than
+      // responding properly to the "on stop" event.
       let noteNode = lastNotes[noteName];
+      if (typeof(noteNode) === 'undefined') {
+        return;
+      }
       try {
         noteNode.stop();
-      } catch {
-        console.log("TRIED TO STOP NONEXISTENT NOTE",noteNumber);
+      } catch(error) {
+        //console.log("ERROR STOPPING NOTE",noteNumber,error);
       }
       delete lastNotes[noteName];
-      while (activeNotes.includes(noteNumber)) {
-        activeNotes.splice(activeNotes.indexOf(noteNumber), 1);
-      }
     }
-    this.setState({ lastNotes, activeNotes });
+    this.setState({ lastNotes });
   }
 
   getNoteName(midiNumber) {
@@ -652,17 +647,17 @@ class App extends Component {
         <Piano
           noteRange={{ first: 21, last: 108 }}
           playNote={(midiNumber) => {
-            this.midiNotePlayer(midiNumber, true, false);
+            //this.midiNotePlayer(midiNumber, true, false, []);
           }}
           stopNote={(midiNumber) => {
-            this.midiNotePlayer(midiNumber, false, false);
+            //this.midiNotePlayer(midiNumber, false, false, []);
           }}
           width={1000}
           onPlayNoteInput={(midiNumber, { prevActiveNotes }) => {
-            this.midiNotePlayer(midiNumber, true, true);
+            this.midiNotePlayer(midiNumber, true, prevActiveNotes);
           }}
           onStopNoteInput={(midiNumber, { prevActiveNotes }) => {
-            this.midiNotePlayer(midiNumber, false, true);
+            this.midiNotePlayer(midiNumber, false, prevActiveNotes);
           }}
           // keyboardShortcuts={keyboardShortcuts}
           activeNotes={this.state.activeNotes}
