@@ -7,12 +7,14 @@ import MultiViewer from "./react-iiif-viewer/src/components/MultiViewer";
 import OpenSeadragon from 'openseadragon';
 import { Piano, KeyboardShortcuts } from 'react-piano';
 import 'react-piano/dist/styles.css';
+import fz_p1 from './images/feuerzauber_p1.png';
 
 const ADSR_SAMPLE_DEFAULTS = { attack: 0.01, decay: 0.1, sustain: 0.9, release: 0.3 };
 const UPDATE_INTERVAL_MS = 100;
 const SHARP_NOTES = ["A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#"];
 const FLAT_NOTES = ["A", "Bb", "B", "C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab"];
 const SOFT_PEDAL_RATIO = .67;
+const DEFAULT_NOTE_VELOCITY = 33.0;
 const HALF_BOUNDARY = 65; // F above Middle C; splits the keyboard into two "pans"
 const imageUrl = "https://stacks.stanford.edu/image/iiif/dj406yq6980%252Fdj406yq6980_0001/info.json";
 
@@ -58,6 +60,8 @@ class App extends Component {
     this.updateTempoSlider = this.updateTempoSlider.bind(this);
     this.updateVolumeSlider = this.updateVolumeSlider.bind(this);
     this.updateADSR = this.updateADSR.bind(this);
+    this.skipToProgress = this.skipToProgress.bind(this);
+    this.skipToPixel = this.skipToPixel.bind(this);
     this.skipTo = this.skipTo.bind(this);
     this.getOSDref = this.getOSDref.bind(this);
     this.panViewportToTick = this.panViewportToTick.bind(this);
@@ -115,9 +119,13 @@ class App extends Component {
     console.log(osdRef.current.openSeadragon.viewport.containerSize);
     console.log(osdRef.current.openSeadragon.viewport.imageToViewportCoordinates(100,100));
     //osdRef.current.openSeadragon.viewport.zoomBy(1);
-    osdRef.current.openSeadragon.viewport.viewer.addHandler("zoom", (e) => {console.log(e)});
     //osdRef.current.openSeadragon.viewport.zoomTo(3, null, true);
     */
+    osdRef.current.openSeadragon.viewport.viewer.addHandler("canvas-drag", (e) => {
+      let center = osdRef.current.openSeadragon.viewport.getCenter();
+      let centerCoords = osdRef.current.openSeadragon.viewport.viewportToImageCoordinates(center);
+      this.skipToPixel(centerCoords.y);
+    });
   }
 
   playPauseSong() {
@@ -133,21 +141,33 @@ class App extends Component {
   }
 
   stopSong() {
-    if (this.state.samplePlayer.isPlaying()) {
+    if (this.state.samplePlayer.isPlaying() || (this.state.playState === "paused")) {
 
       this.state.samplePlayer.stop();
       clearInterval(this.state.scrollTimer);
-      this.setState({ playState: "stopped", scrollTimer: null, lastNotes: {}, activeNotes: [], sustainedNotes: {} });
+      this.setState({ playState: "stopped", currentTick: 0, scrollTimer: null, lastNotes: {}, activeNotes: [], sustainedNotes: {} });
+      this.panViewportToTick(0);
     }
   }
 
-  skipTo(event) {
-    if (!this.state.samplePlayer) {
-      return;
-    }
+  skipToPixel(yPixel) {
+    const targetTick = Math.max(0,yPixel - this.state.firstHolePx);
+    const targetProgress = parseFloat(targetTick) / parseFloat(this.state.totalTicks);
+
+    this.skipTo(targetTick, targetProgress)
+  }
+
+  skipToProgress(event) {
     const targetProgress = event.target.value;
     const targetTick = parseInt(targetProgress * parseFloat(this.state.totalTicks));
 
+    this.skipTo(targetTick, targetProgress);
+  }
+
+  skipTo(targetTick, targetProgress) {
+    if (!this.state.samplePlayer) {
+      return;
+    }
     this.setState({currentProgress: targetProgress});
     if (this.state.samplePlayer.isPlaying()) {
       this.state.samplePlayer.pause();
@@ -415,7 +435,12 @@ class App extends Component {
         if (!(this.state.activeNotes.includes(noteNumber))) {
           // XXX Maybe use a slower release velocity for pedal events?
           if (typeof(this.state.sustainedNotes[noteName].stop === 'function')) {
-            this.state.sustainedNotes[noteName].stop();
+            try {
+              this.state.sustainedNotes[noteName].stop();
+            } catch {
+              // XXX This can happen with manual keyboard note entry
+              console.log("TRIED TO UNSUSTAIN AN ALREADY STOPPED NOTE");
+            }
           }
           delete lastNotes[noteName];
         }
@@ -468,32 +493,43 @@ class App extends Component {
       (instrument) => this.setState({ instrument, sampleInst: newInstName }));
   }
 
-  midiNotePlayer(midiNote, trueIfOn, fromInput) {
-    // XXX Need better behavior when keyboard is clicked during playback
-    if ((this.state.playState === "playing") && (!fromInput)) {
+  midiNotePlayer(noteNumber, trueIfOn, fromInput) {
+    if ((this.state.playing !== "playing") && (!fromInput)) {
       return;
     }
     let lastNotes = {...this.state.lastNotes};
     let activeNotes = [...this.state.activeNotes];
-    const noteName = this.getNoteName(midiNote);
+    const noteName = this.getNoteName(noteNumber);
+
+    //console.log("MANUAL NOTE",noteNumber,"ON",trueIfOn,"SUSTAIN",this.state.sustainPedalOn);
+
     if (trueIfOn) {
-      if (activeNotes.includes(midiNote)) {
-        console.log("DUPLICATE NOTE PLAY",midiNote);
+      let updatedVolume = DEFAULT_NOTE_VELOCITY/100.0 * this.state.volumeRatio;
+      if (this.state.softPedalOn) {
+        updatedVolume *= SOFT_PEDAL_RATIO;
+      }
+      if (noteNumber < HALF_BOUNDARY) {
+        updatedVolume *= this.state.leftVolumeRatio;
+      } else if (noteNumber >= HALF_BOUNDARY) {
+        updatedVolume *= this.state.rightVolumeRatio;
+      }
+      if (activeNotes.includes(noteNumber)) {
+        console.log("DUPLICATE NOTE PLAY",noteNumber);
         return;
       }
-      let noteNode = this.state.instrument.play(noteName, this.state.ac.currentTime/*, { gain: updatedVolume, adsr }*/);
+      let noteNode = this.state.instrument.play(noteName, this.state.ac.currentTime, {gain: updatedVolume, adsr: this.state.adsr });
       lastNotes[noteName] = noteNode;
-      activeNotes.push(midiNote);
+      activeNotes.push(noteNumber);
     } else {
       let noteNode = lastNotes[noteName];
       try {
         noteNode.stop();
       } catch {
-        console.log("TRIED TO STOP NONEXISTENT NOTE",midiNote);
+        console.log("TRIED TO STOP NONEXISTENT NOTE",noteNumber);
       }
       delete lastNotes[noteName];
-      while (activeNotes.includes(midiNote)) {
-        activeNotes.splice(activeNotes.indexOf(midiNote), 1);
+      while (activeNotes.includes(noteNumber)) {
+        activeNotes.splice(activeNotes.indexOf(noteNumber), 1);
       }
     }
     this.setState({ lastNotes, activeNotes });
@@ -609,14 +645,21 @@ class App extends Component {
         />
         <button id="soft_pedal" name="soft" onClick={this.togglePedalLock} style={{background: (this.state.softPedalOn ? "lightblue" : "white")}}>SOFT</button>
         <button id="sustain_pedal" name="sustain" onClick={this.togglePedalLock} style={{background: (this.state.sustainPedalOn ? "lightblue" : "white")}}>SUST</button>
-        <MultiViewer
-          height="800px"
-          width="500px"
-          iiifUrls={[imageUrl]}
-          showToolbar={false}
-          backdoor={this.getOSDref}
-        />
+        <div>
+          <div style={{float: "left"}}>
+            <MultiViewer
+              height="800px"
+              width="500px"
+              iiifUrls={[imageUrl]}
+              showToolbar={false}
+              backdoor={this.getOSDref}
+            />
+          </div>
+        <div style={{float: "right"}}>
+          <img style={{"height": "800px"}} src={fz_p1}/>
+        </div>
       </div>
+    </div>
     );
   }
 }
