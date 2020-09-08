@@ -7,7 +7,7 @@ import MultiViewer from "./react-iiif-viewer/src/components/MultiViewer";
 import OpenSeadragon from 'openseadragon';
 import { Piano, KeyboardShortcuts } from 'react-piano';
 import 'react-piano/dist/styles.css';
-import fz_p1 from './images/feuerzauber_p1.png';
+import fz_p1 from './images/feuerzauber_p1.gif';
 
 const ADSR_SAMPLE_DEFAULTS = { attack: 0.01, decay: 0.1, sustain: 0.9, release: 0.3 };
 const UPDATE_INTERVAL_MS = 100;
@@ -176,6 +176,7 @@ class App extends Component {
       this.state.samplePlayer.play();
     } else {
       this.state.samplePlayer.skipToTick(targetTick);
+      this.panViewportToTick(targetTick);
     }
   }
 
@@ -613,17 +614,23 @@ class App extends Component {
               <option value="electric_piano_2">Electric 2</option>
             </select>
           </div>
-          <div style={{float: "right"}}>ADSR envelope (experimental):
-            <div>Attack: <input disabled type="range" min="0" max=".02" step=".01" value={this.state.adsr['attack']} className="slider" id="attack" onChange={this.updateADSR}/> {this.state.adsr['attack']}</div>
-            <div>Decay: <input disabled type="range" min="0" max=".1" step=".01" value={this.state.adsr['decay']} className="slider" id="decay" onChange={this.updateADSR}/> {this.state.adsr['decay']}</div>
-            <div>Sustain: <input type="range" min="0" max="5" step=".1" value={this.state.adsr['sustain']} className="slider" id="sustain" onChange={this.updateADSR}/> {this.state.adsr['sustain']}</div>
-            <div>Release: <input disabled type="range" min="0" max="1" step=".1" value={this.state.adsr['release']} className="slider" id="release" onChange={this.updateADSR}/> {this.state.adsr['release']}</div>          
+          <div className="flex-container" style={{display: "flex", flexDirection: "row", justifyContent: "space-around" }}>
+            <div style={{textAlign: "left"}}>
+              <div>Tempo: <input type="range" min="0" max="180" value={this.state.sliderTempo} className="slider" id="tempoSlider" onChange={this.updateTempoSlider} /> {this.state.sliderTempo} bpm</div>
+              <div>Master Volume: <input type="range" min="0" max="4" step=".1" value={this.state.volumeRatio} className="slider" id="masterVolumeSlider" name="volume" onChange={this.updateVolumeSlider} /> {this.state.volumeRatio}</div>
+              <div>Left Volume: <input type="range" min="0" max="4" step=".1" value={this.state.leftVolumeRatio} className="slider" id="leftVolumeSlider" name="left" onChange={this.updateVolumeSlider} /> {this.state.leftVolumeRatio}</div>
+              <div>Right Volume: <input type="range" min="0" max="4" step=".1" value={this.state.rightVolumeRatio} className="slider" id="rightVolumeSlider" name="right" onChange={this.updateVolumeSlider} /> {this.state.rightVolumeRatio}</div>
+              <div>Progress: <input type="range" min="0" max="1" step=".01" value={this.state.currentProgress} className="slider" id="progress" onChange={this.skipToProgress} /> {(this.state.currentProgress * 100.).toFixed(2)+"%"} </div>
+            </div>
+            <div style={{textAlign: "left"}}>
+              <div>ADSR envelope (experimental):
+                <div>Attack: <input disabled type="range" min="0" max=".02" step=".01" value={this.state.adsr['attack']} className="slider" id="attack" onChange={this.updateADSR}/> {this.state.adsr['attack']}</div>
+                <div>Decay: <input disabled type="range" min="0" max=".1" step=".01" value={this.state.adsr['decay']} className="slider" id="decay" onChange={this.updateADSR}/> {this.state.adsr['decay']}</div>
+                <div>Sustain: <input type="range" min="0" max="5" step=".1" value={this.state.adsr['sustain']} className="slider" id="sustain" onChange={this.updateADSR}/> {this.state.adsr['sustain']}</div>
+                <div>Release: <input disabled type="range" min="0" max="1" step=".1" value={this.state.adsr['release']} className="slider" id="release" onChange={this.updateADSR}/> {this.state.adsr['release']}</div>          
+              </div>
+            </div>
           </div>
-          <div>Tempo: <input type="range" min="0" max="180" value={this.state.sliderTempo} className="slider" id="tempoSlider" onChange={this.updateTempoSlider} /> {this.state.sliderTempo} bpm</div>
-          <div>Master Volume: <input type="range" min="0" max="4" step=".1" value={this.state.volumeRatio} className="slider" id="masterVolumeSlider" name="volume" onChange={this.updateVolumeSlider} /> {this.state.volumeRatio}</div>
-          <div>Left Volume: <input type="range" min="0" max="4" step=".1" value={this.state.leftVolumeRatio} className="slider" id="leftVolumeSlider" name="left" onChange={this.updateVolumeSlider} /> {this.state.leftVolumeRatio}</div>
-          <div>Right Volume: <input type="range" min="0" max="4" step=".1" value={this.state.rightVolumeRatio} className="slider" id="rightVolumeSlider" name="right" onChange={this.updateVolumeSlider} /> {this.state.rightVolumeRatio}</div>
-          <div>Progress: <input type="range" min="0" max="1" step=".01" value={this.state.currentProgress} className="slider" id="progress" onChange={this.skipToProgress} /> {(this.state.currentProgress * 100.).toFixed(2)+"%"} </div>
         </div>
         <Piano
           noteRange={{ first: 21, last: 108 }}
@@ -645,8 +652,8 @@ class App extends Component {
         />
         <button id="soft_pedal" name="soft" onClick={this.togglePedalLock} style={{background: (this.state.softPedalOn ? "lightblue" : "white")}}>SOFT</button>
         <button id="sustain_pedal" name="sustain" onClick={this.togglePedalLock} style={{background: (this.state.sustainPedalOn ? "lightblue" : "white")}}>SUST</button>
-        <div>
-          <div style={{float: "left"}}>
+        <div className="flex-container" style={{display: "flex", flexDirection: "row", justifyContent: "space-between" }}>
+          <div>
             <MultiViewer
               height="800px"
               width="500px"
@@ -655,11 +662,11 @@ class App extends Component {
               backdoor={this.getOSDref}
             />
           </div>
-        <div style={{float: "right"}}>
-          <img style={{"height": "800px"}} src={fz_p1}/>
+          <div>
+            <img style={{"width": "500px"}} src={fz_p1}/>
+          </div>
         </div>
       </div>
-    </div>
     );
   }
 }
