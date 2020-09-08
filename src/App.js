@@ -171,8 +171,8 @@ class App extends Component {
     if (!this.state.samplePlayer) {
       return;
     }
-    // XXX The notes should sort themselves out, but the wrong pedals will
-    // possibly be on (and stay on) after skipping around a roll. The best
+    // XXX The notes will sort themselves out, but the wrong pedals will
+    // possibly be on/off and stay that after skipping around a roll. The best
     // (probably only) way to fix this is to look backwards in the event
     // sequence, or ideally build a complete timeline of pedal actions
     // before playback.
@@ -519,7 +519,7 @@ class App extends Component {
     let activeNotes = [...this.state.activeNotes];
     const noteName = this.getNoteName(noteNumber);
 
-    //console.log("MANUAL NOTE",noteNumber,"ON",trueIfOn,"SUSTAIN",this.state.sustainPedalOn);
+    //console.log("MANUAL NOTE",noteNumber,"ON",trueIfOn);
 
     if (trueIfOn) {
       let updatedVolume = DEFAULT_NOTE_VELOCITY/100.0 * this.state.volumeRatio;
@@ -631,7 +631,7 @@ class App extends Component {
               <option value="electric_piano_2">Electric 2</option>
             </select>
           </div>
-          <div className="flex-container" style={{display: "flex", flexDirection: "row", justifyContent: "space-around" }}>
+          <div className="flex-container" style={{display: "flex", flexDirection: "row", justifyContent: "space-around", width: "1000px" }}>
             <div style={{textAlign: "left"}}>
               <div>Tempo: <input type="range" min="0" max="180" value={this.state.sliderTempo} className="slider" id="tempoSlider" onChange={this.updateTempoSlider} /> {this.state.sliderTempo} bpm</div>
               <div>Master Volume: <input type="range" min="0" max="4" step=".1" value={this.state.volumeRatio} className="slider" id="masterVolumeSlider" name="volume" onChange={this.updateVolumeSlider} /> {this.state.volumeRatio}</div>
@@ -669,7 +669,7 @@ class App extends Component {
         />
         <button id="soft_pedal" name="soft" onClick={this.togglePedalLock} style={{background: (this.state.softPedalOn ? "lightblue" : "white")}}>SOFT</button>
         <button id="sustain_pedal" name="sustain" onClick={this.togglePedalLock} style={{background: (this.state.sustainPedalOn ? "lightblue" : "white")}}>SUST</button>
-        <div className="flex-container" style={{display: "flex", flexDirection: "row", justifyContent: "space-between" }}>
+        <div className="flex-container" style={{display: "flex", flexDirection: "row", justifyContent: "space-between", width: "1000px" }}>
           <div>
             <MultiViewer
               height="800px"
