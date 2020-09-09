@@ -15,7 +15,7 @@ const SHARP_NOTES = ["A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", 
 const FLAT_NOTES = ["A", "Bb", "B", "C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab"];
 const SOFT_PEDAL_RATIO = .67;
 const DEFAULT_NOTE_VELOCITY = 33.0;
-const HALF_BOUNDARY = 65; // F above Middle C; splits the keyboard into two "pans"
+const HALF_BOUNDARY = 65; // F above Middle C; divides the keyboard into two "pans"
 const imageUrl = "https://stacks.stanford.edu/image/iiif/dj406yq6980%252Fdj406yq6980_0001/info.json";
 
 class App extends Component {
@@ -39,6 +39,7 @@ class App extends Component {
       baseTempo: null,
       tempoRatio: 1.0, // To keep track of gradual roll acceleration
       sliderTempo: 60.0,
+      playbackTempo: 0, // Combines slider and tempo ratio
       ac: null,
       currentTick: 0,
       currentProgress: 0.0,
@@ -50,7 +51,8 @@ class App extends Component {
       sustainPedalLocked: false,
       softPedalLocked: false,
       sustainedNotes: {},
-      homeZoom: null
+      homeZoom: null,
+      rollMetadata: {}
     }
 
     this.midiEvent = this.midiEvent.bind(this);
@@ -190,9 +192,11 @@ class App extends Component {
   }
 
   updateTempoSlider(event) {
-    this.setState({sliderTempo: event.target.value});
     const playbackTempo = event.target.value * this.state.tempoRatio;
+    // XXX Player jumps back on shift to slower playback tempo, forward on 
+    // shift to faster tempo. Why???
     this.state.samplePlayer.setTempo(playbackTempo);
+    this.setState({sliderTempo: event.target.value, playbackTempo});
   }
 
   updateVolumeSlider(event) {
@@ -268,6 +272,8 @@ class App extends Component {
     let holeWidthPx = 0;
     let baseTempo = null;
     let earliestTempoTick = null;
+    let rollMetadata = {};
+    const metadataRegex = /^@(?<key>[^:]*):[\t\s]*(?<value>.*)$/;
 
     MidiSamplePlayer.events[0].forEach((event) => {
       /* Tempo events *should* be in order, and the tempo *should* only ever
@@ -291,18 +297,27 @@ class App extends Component {
         * @HOLE_OFFSET
         * All of the source/performance/recording metadata is in this track as well.
         */
-        if (text.startsWith('@FIRST_HOLE:')) {
-          firstHolePx = parseInt(text.split("\t")[2].replace("px",""));
-          //console.log("FIRST HOLE:",firstHolePx);
-        } else if (text.startsWith('@LAST_HOLE:')) {
-          lastHolePx = parseInt(text.split("\t")[2].replace("px",""));
-          //console.log("LAST HOLE:",lastHolePx);
-        } else if (text.startsWith('@AVG_HOLE_WIDTH:')) {
-          holeWidthPx = parseInt(text.split("\t")[1].replace("px",""));
-          //console.log("HOLE WIDTH:",holeWidthPx);
-        }
+        const found = text.match(metadataRegex);
+        rollMetadata[found.groups.key] = found.groups.value;
       }
     });
+
+    firstHolePx = parseInt(rollMetadata['FIRST_HOLE']);
+    lastHolePx = parseInt(rollMetadata['LAST_HOLE']);
+    holeWidthPx = parseInt(rollMetadata['AVG_HOLE_WIDTH']);
+
+    /*
+    if (text.startsWith('@FIRST_HOLE:')) {
+      firstHolePx = parseInt(text.split("\t")[2].replace("px",""));
+      //console.log("FIRST HOLE:",firstHolePx);
+    } else if (text.startsWith('@LAST_HOLE:')) {
+      lastHolePx = parseInt(text.split("\t")[2].replace("px",""));
+      //console.log("LAST HOLE:",lastHolePx);
+    } else if (text.startsWith('@AVG_HOLE_WIDTH:')) {
+      holeWidthPx = parseInt(text.split("\t")[1].replace("px",""));
+      //console.log("HOLE WIDTH:",holeWidthPx);
+    }
+    */
 
     //console.log(this.state.osdRef.current.openSeadragon);
 
@@ -336,7 +351,7 @@ class App extends Component {
       playLine.update(playPoint, OpenSeadragon.Placement.TOP_LEFT);
     }
     */
-    this.setState({samplePlayer: MidiSamplePlayer, instrument: inst, totalTicks: MidiSamplePlayer.totalTicks, firstHolePx, baseTempo, homeZoom});
+    this.setState({samplePlayer: MidiSamplePlayer, instrument: inst, totalTicks: MidiSamplePlayer.totalTicks, firstHolePx, baseTempo, homeZoom, rollMetadata});
     //console.log("TOTAL TICKS:",MidiSamplePlayer.totalTicks);
     //console.log("SONG TIME:",MidiSamplePlayer.getSongTime());
 
@@ -423,7 +438,7 @@ class App extends Component {
       const playbackTempo = parseFloat(this.state.sliderTempo) * tempoRatio;
       
       this.state.samplePlayer.setTempo(playbackTempo);
-      this.setState({speedupFactor: tempoRatio});
+      this.setState({tempoRatio, playbackTempo})
     }
 
     // The scrollTimer should ensure that the roll is synchronized with
@@ -608,37 +623,45 @@ class App extends Component {
       <div className="App">
         <div className="flex-container" style={{display: "flex", flexDirection: "row", justifyContent: "space-around", width: "1000px" }}>
           <div>
+            <div style={{textAlign: "left"}}>
+              <strong>Title:</strong> {this.state.rollMetadata['TITLE']}<br />
+              <strong>Performer:</strong> {this.state.rollMetadata['PERFORMER']}<br />
+              <strong>Composer:</strong> {this.state.rollMetadata['COMPOSER']}<br />
+            </div>
             <button id="pause" onClick={this.playPauseSong} style={{background: (this.state.playState === "paused" ? "lightgray" : "white")}}>Play/Pause</button>
             <button id="stop" onClick={this.stopSong} style={{background: "white"}}>Stop</button>
+            <div style={{textAlign: "left"}}>
+              <div>Tempo: <input type="range" min="0" max="180" value={this.state.sliderTempo} className="slider" id="tempoSlider" onChange={this.updateTempoSlider} /> {this.state.sliderTempo} bpm</div>
+              <div>Master Volume: <input type="range" min="0" max="4" step=".1" value={this.state.volumeRatio} className="slider" id="masterVolumeSlider" name="volume" onChange={this.updateVolumeSlider} /> {this.state.volumeRatio}</div>
+              <div>Left Volume: <input type="range" min="0" max="4" step=".1" value={this.state.leftVolumeRatio} className="slider" id="leftVolumeSlider" name="left" onChange={this.updateVolumeSlider} /> {this.state.leftVolumeRatio}</div>
+              <div>Right Volume: <input type="range" min="0" max="4" step=".1" value={this.state.rightVolumeRatio} className="slider" id="rightVolumeSlider" name="right" onChange={this.updateVolumeSlider} /> {this.state.rightVolumeRatio}</div>
+              <div>Progress: <input type="range" min="0" max="1" step=".01" value={this.state.currentProgress} className="slider" id="progress" onChange={this.skipToProgress} /> {(this.state.currentProgress * 100.).toFixed(2)+"%"} </div>
+            </div>
           </div>
           <div>
-            <label htmlFor="sampleInstrument">
-              Sample instrument:{" "}
-            </label>
-            <select
-              value={this.state.sampleInst}
-              type="string"
-              name="sampleInstrument"
-              id="sampleInstrument"
-              onChange={this.changeInstrument}
-            >
-              <option value="acoustic_grand_piano">Acoustic Grand</option>
-              <option value="bright_acoustic_piano">Bright Acoustic</option>
-              <option value="electric_piano_1">Electric 1</option>
-              <option value="electric_piano_2">Electric 2</option>
-            </select>
-          </div>
-        </div>
-        <div className="flex-container" style={{display: "flex", flexDirection: "row", justifyContent: "space-around", width: "1000px" }}>
-          <div style={{textAlign: "left"}}>
-            <div>Tempo: <input type="range" min="0" max="180" value={this.state.sliderTempo} className="slider" id="tempoSlider" onChange={this.updateTempoSlider} /> {this.state.sliderTempo} bpm</div>
-            <div>Master Volume: <input type="range" min="0" max="4" step=".1" value={this.state.volumeRatio} className="slider" id="masterVolumeSlider" name="volume" onChange={this.updateVolumeSlider} /> {this.state.volumeRatio}</div>
-            <div>Left Volume: <input type="range" min="0" max="4" step=".1" value={this.state.leftVolumeRatio} className="slider" id="leftVolumeSlider" name="left" onChange={this.updateVolumeSlider} /> {this.state.leftVolumeRatio}</div>
-            <div>Right Volume: <input type="range" min="0" max="4" step=".1" value={this.state.rightVolumeRatio} className="slider" id="rightVolumeSlider" name="right" onChange={this.updateVolumeSlider} /> {this.state.rightVolumeRatio}</div>
-            <div>Progress: <input type="range" min="0" max="1" step=".01" value={this.state.currentProgress} className="slider" id="progress" onChange={this.skipToProgress} /> {(this.state.currentProgress * 100.).toFixed(2)+"%"} </div>
-          </div>
-          <div style={{textAlign: "left"}}>
-            <div>ADSR envelope (experimental):
+            <div style={{textAlign: "left"}}>
+              <strong>Label:</strong> {this.state.rollMetadata['LABEL']}<br />
+              <strong>PURL:</strong> <a href={this.state.rollMetadata['PURL']}>{this.state.rollMetadata['PURL']}</a><br />
+              <strong>Call No:</strong> {this.state.rollMetadata['CALLNUM']}<br />
+            </div>
+            <div>
+              <label htmlFor="sampleInstrument">
+                Sample instrument:{" "}
+              </label>
+              <select
+                value={this.state.sampleInst}
+                type="string"
+                name="sampleInstrument"
+                id="sampleInstrument"
+                onChange={this.changeInstrument}
+              >
+                <option value="acoustic_grand_piano">Acoustic Grand</option>
+                <option value="bright_acoustic_piano">Bright Acoustic</option>
+                <option value="electric_piano_1">Electric 1</option>
+                <option value="electric_piano_2">Electric 2</option>
+              </select>
+            </div>
+            <div style={{textAlign: "left"}}>ADSR envelope (experimental):
               <div>Attack: <input disabled type="range" min="0" max=".02" step=".01" value={this.state.adsr['attack']} className="slider" id="attack" onChange={this.updateADSR}/> {this.state.adsr['attack']}</div>
               <div>Decay: <input disabled type="range" min="0" max=".1" step=".01" value={this.state.adsr['decay']} className="slider" id="decay" onChange={this.updateADSR}/> {this.state.adsr['decay']}</div>
               <div>Sustain: <input type="range" min="0" max="5" step=".1" value={this.state.adsr['sustain']} className="slider" id="sustain" onChange={this.updateADSR}/> {this.state.adsr['sustain']}</div>
