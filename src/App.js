@@ -8,6 +8,7 @@ import OpenSeadragon from 'openseadragon';
 import { Piano, KeyboardShortcuts } from 'react-piano';
 import 'react-piano/dist/styles.css';
 import fz_p1 from './images/feuerzauber_p1.gif';
+import IntervalTree from 'node-interval-tree';
 
 const ADSR_SAMPLE_DEFAULTS = { attack: 0.01, decay: 0.1, sustain: 0.9, release: 0.3 };
 const UPDATE_INTERVAL_MS = 100;
@@ -15,7 +16,7 @@ const SHARP_NOTES = ["A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", 
 const FLAT_NOTES = ["A", "Bb", "B", "C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab"];
 const SOFT_PEDAL_RATIO = .67;
 const DEFAULT_NOTE_VELOCITY = 33.0;
-const HALF_BOUNDARY = 65; // F above Middle C; divides the keyboard into two "pans"
+const HALF_BOUNDARY = 66; // F# above Middle C; divides the keyboard into two "pans"
 const imageUrl = "https://stacks.stanford.edu/image/iiif/dj406yq6980%252Fdj406yq6980_0001/info.json";
 
 class App extends Component {
@@ -52,7 +53,9 @@ class App extends Component {
       softPedalLocked: false,
       sustainedNotes: {},
       homeZoom: null,
-      rollMetadata: {}
+      rollMetadata: {},
+      panBoundary: HALF_BOUNDARY,
+      pedalMap: null // Interval tree of "pedal on" tick ranges
     }
 
     this.midiEvent = this.midiEvent.bind(this);
@@ -91,40 +94,17 @@ class App extends Component {
     let currentSong = mididata['magic_fire'];
 
     this.setState({ac, currentSong});
-        
-    //this.setState({baseTempo: midiData.header.tempos[0]['bpm'], sliderTempo: midiData.header.tempos[0]['bpm']}));
 
     // Instantiate the sample-based player
-    // It's possible to load a local soundfont via the soundfont-player,
-    // sample-player, audio-loader toolchain. This is much easier to do
-    // if the soundfont is in Midi.js format
+    // Custom soundfouts can be loaded via a URL. They should be in
+    // MIDI.js format. 
     Soundfont.instrument(ac, this.state.sampleInst, { soundfont: 'MusyngKite' }).then(this.initPlayer);
     //Soundfont.instrument(ac, "http://localhost/~pmb/demotron/salamander_acoustic_grand-mod-ogg.js" ).then(this.initPlayer);
   }
 
   getOSDref(osdRef) {
-    //console.log(osdRef);
+
     this.setState({osdRef});
-    /*
-    console.log(osdRef.current.openSeadragon.viewport._contentSize);
-    console.log(osdRef.current.openSeadragon.viewport.getZoom());
-    console.log(osdRef.current.openSeadragon.viewport.getMaxZoom());
-    console.log(osdRef.current.openSeadragon.viewport.getMinZoom());
-    console.log(osdRef.current.openSeadragon.viewport.getBounds());
-    console.log(osdRef.current.openSeadragon.viewport.getBoundsWithMargins());
-    console.log(osdRef.current.openSeadragon.viewport.getHomeBounds());
-    console.log(osdRef.current.openSeadragon.viewport.getHomeZoom());
-    console.log(osdRef.current.openSeadragon.viewport.getAspectRatio());
-    osdRef.current.openSeadragon.viewport.fitVertically(true);
-    let center = osdRef.current.openSeadragon.viewport.getCenter();
-    console.log(center);
-    //var bounds = new OpenSeadragon.Rect(0.25, 0.25, 0.5, 0.5, 0);
-    //osdRef.current.openSeadragon.viewport.fitBounds(bounds, true);
-    console.log(osdRef.current.openSeadragon.viewport.containerSize);
-    console.log(osdRef.current.openSeadragon.viewport.imageToViewportCoordinates(100,100));
-    //osdRef.current.openSeadragon.viewport.zoomBy(1);
-    //osdRef.current.openSeadragon.viewport.zoomTo(3, null, true);
-    */
     osdRef.current.openSeadragon.viewport.viewer.addHandler("canvas-drag", (e) => {
       let center = osdRef.current.openSeadragon.viewport.getCenter();
       let centerCoords = osdRef.current.openSeadragon.viewport.viewportToImageCoordinates(center);
@@ -185,8 +165,15 @@ class App extends Component {
     // (probably only) way to fix this is to look backwards in the event
     // sequence, or ideally build a complete timeline of pedal actions
     // before playback.
+
     let playTick = Math.max(0, targetTick);
     let playProgress = Math.max(0, targetProgress);
+
+    const pedalsOn = this.state.pedalMap.search(playTick, playTick);
+
+    let sustainPedalOn = this.state.sustainPedalLocked || pedalsOn.includes("sustain");
+    let softPedalOn = this.state.softPedalLocked || pedalsOn.includes("soft");
+
     if (this.state.samplePlayer.isPlaying()) {
       this.state.samplePlayer.pause();
       this.state.samplePlayer.skipToTick(playTick);
@@ -196,6 +183,7 @@ class App extends Component {
       this.state.samplePlayer.skipToTick(playTick);
       this.panViewportToTick(targetTick);
     }
+    this.setState({ sustainPedalOn, softPedalOn });
   }
 
   updateTempoSlider(event) {
@@ -263,21 +251,53 @@ class App extends Component {
 
     /* Load MIDI data */
     MidiSamplePlayer.loadDataUri(this.state.currentSong);
-    // May need to look ahead to find starting tempo...
-    /*console.log(Player.getTotalTicks()); // Doesn't work, but Player.totalTicks does
-    console.log(Player.tracks);
-    console.log(Player.events);
-    */
+
     this.state.osdRef.current.openSeadragon.viewport.fitHorizontally(true);
-    //console.log("CONTENT SIZE",this.state.osdRef.current.openSeadragon.viewport._contentSize);
+
     let viewportBounds = this.state.osdRef.current.openSeadragon.viewport.getBounds();
-    //console.log("BOUNDS", viewportBounds);
-    let fittedViewportZoom = this.state.osdRef.current.openSeadragon.viewport.getZoom();
-    //console.log("ZOOM",fittedViewportZoom);
+ 
     // This will do a "dry run" of the playback and set all event timings.
-    // May be useful, but not necessary at the moment.
+    // Should already done by this point... (?)
     //MidiSamplePlayer.fileLoaded();
-    //console.log(MidiSamplePlayer.events);
+
+    let pedalMap = new IntervalTree();
+
+    // Pedal events should be duplicated on each track, but best not to assume
+    // this will always be the case. Assume however that the events are
+    // always temporally ordered in each track.
+    let trackNumber = 0;
+    MidiSamplePlayer.events.forEach((track) => {
+      let sustainOn = false;
+      let softOn = false;
+      let sustainStart = 0;
+      let softStart = 0;
+      trackNumber += 1;
+      track.forEach((event) => {
+        if (event.name === "Controller Change") {
+          // Sustain pedal on/off
+          if (event.number == 64) {
+            if ((event.value == 127) && (sustainOn != true)) {
+              sustainOn = true;
+              sustainStart = event.tick;
+            } else if (event.value == 0) {
+              sustainOn = false;
+              pedalMap.insert(sustainStart, event.tick, "sustain");
+            }
+          // Soft pedal on/off
+          } else if (event.number == 67) {
+            // Consecutive "on" events just mean "yep, still on" ??
+            if ((event.value == 127) && (softOn != true)) {
+              softOn = true;
+              softStart = event.tick;
+            } else if (event.value == 0) {
+              softOn = false;
+              pedalMap.insert(softStart, event.tick, "soft");
+            }
+          }
+        }
+      });
+    });
+
     let firstHolePx = 0;
     let lastHolePx = 0;
     let holeWidthPx = 0;
@@ -300,7 +320,7 @@ class App extends Component {
         /* @IMAGE_WIDTH and @IMAGE_LENGTH should be the same as from viewport._contentSize
         * Can't think of why they wouldn't be, but maybe check anyway. Would need to scale
         * all pixel values if so.
-        * Other potentially useful values:
+        * Other potentially useful values, e.g., for drawing overlays:
         * @ROLL_WIDTH (this is smaller than the image width)
         * @HARD_MARGIN_TREBLE
         * @HARD_MARGIN_BASS
@@ -317,42 +337,20 @@ class App extends Component {
     lastHolePx = parseInt(rollMetadata['LAST_HOLE']);
     holeWidthPx = parseInt(rollMetadata['AVG_HOLE_WIDTH']);
 
-    /*
-    if (text.startsWith('@FIRST_HOLE:')) {
-      firstHolePx = parseInt(text.split("\t")[2].replace("px",""));
-      //console.log("FIRST HOLE:",firstHolePx);
-    } else if (text.startsWith('@LAST_HOLE:')) {
-      lastHolePx = parseInt(text.split("\t")[2].replace("px",""));
-      //console.log("LAST HOLE:",lastHolePx);
-    } else if (text.startsWith('@AVG_HOLE_WIDTH:')) {
-      holeWidthPx = parseInt(text.split("\t")[1].replace("px",""));
-      //console.log("HOLE WIDTH:",holeWidthPx);
-    }
-    */
-
-    //console.log(this.state.osdRef.current.openSeadragon);
-
     let firstLineViewport = this.state.osdRef.current.openSeadragon.viewport.imageToViewportCoordinates(0,firstHolePx);
-    //console.log("VIEWPORT COORDS OF FIRST HOLE LINE",firstLineViewport);
-    let firstLineCenter = new OpenSeadragon.Point(viewportBounds.width / 2.0, firstLineViewport.y);
 
-    //this.state.osdRef.current.openSeadragon.viewport.panTo(firstLineCenter);
     let bounds = new OpenSeadragon.Rect(0.0,firstLineViewport.y - (viewportBounds.height / 2.0),viewportBounds.width, viewportBounds.height);
     this.state.osdRef.current.openSeadragon.viewport.fitBounds(bounds, true);
 
-    let startBounds = this.state.osdRef.current.openSeadragon.viewport.getBounds();
-
     let homeZoom = this.state.osdRef.current.openSeadragon.viewport.getZoom();
-    
-    //console.log("UPDATED BOUNDS",viewportBounds);
-    let playPoint = new OpenSeadragon.Point(0, startBounds.y + (startBounds.height / 2.0));
-    //console.log(playPoint);
 
     /*
     // Play line can be drawn via CSS (though not as accurately), but very
     // similar code to this would be used to show other overlays, e.g., to
     // "fill" in actively playing notes and other mechanics. Performance is
     // an issue, though.
+    let startBounds = this.state.osdRef.current.openSeadragon.viewport.getBounds();
+    let playPoint = new OpenSeadragon.Point(0, startBounds.y + (startBounds.height / 2.0));
     let playLine = this.state.osdRef.current.openSeadragon.viewport.viewer.getOverlayById('play-line');
     if (!playLine) {
       playLine = document.createElement("div");
@@ -362,20 +360,14 @@ class App extends Component {
       playLine.update(playPoint, OpenSeadragon.Placement.TOP_LEFT);
     }
     */
-    this.setState({samplePlayer: MidiSamplePlayer, instrument: inst, totalTicks: MidiSamplePlayer.totalTicks, firstHolePx, baseTempo, homeZoom, rollMetadata});
-    //console.log("TOTAL TICKS:",MidiSamplePlayer.totalTicks);
-    //console.log("SONG TIME:",MidiSamplePlayer.getSongTime());
-
+    this.setState({ samplePlayer: MidiSamplePlayer, instrument: inst, totalTicks: MidiSamplePlayer.totalTicks, firstHolePx, baseTempo, homeZoom, rollMetadata, pedalMap });
   }
 
   midiEvent(event) {
     // Do something when a MIDI event is fired.
     // (this is the same as passing a function to MidiPlayer.Player() when instantiating).
     if (event.name === 'Note on') {
-      //console.log("NOTE ON EVENT AT", this.state.ac.currentTime, event.tick);
-      //console.log(event);
 
-      //const noteName = event.noteName;
       const noteNumber = event.noteNumber;
       const noteName = this.getNoteName(noteNumber);
       let noteVelocity = event.velocity;
@@ -402,13 +394,12 @@ class App extends Component {
         if (this.state.softPedalOn) {
           updatedVolume *= SOFT_PEDAL_RATIO;
         }
-        if (noteNumber < HALF_BOUNDARY) {
+        if (noteNumber < this.state.panBoundary) {
           updatedVolume *= this.state.leftVolumeRatio;
-        } else if (noteNumber >= HALF_BOUNDARY) {
+        } else if (noteNumber >= this.state.panBoundary) {
           updatedVolume *= this.state.rightVolumeRatio;
         }
-        //let lastNotes = Object.assign({}, this.state.lastNotes);
-        // Play a note -- can also set ADSR values in the opts, could be used to simulate pedaling
+
         try {
           let adsr = [this.state.adsr['attack'], this.state.adsr['decay'], this.state.adsr['sustain'], this.state.adsr['release']];
           let noteNode = this.state.instrument.play(noteName, this.state.ac.currentTime, { gain: updatedVolume, adsr });
@@ -437,19 +428,26 @@ class App extends Component {
           this.changeSustainPedal(true);
         }
       // 67 is the soft (una corda) pedal
-      } else if (event.number == 67) {
+      } else if (event.number == 67 && !this.state.softPedalLocked) {
         if (event.value == 127) {
           this.setState({ softPedalOn: true });
         } else if (event.value == 0) {
           this.setState({ softPedalOn: false });
         }
+      } else if (event.number == 10) {
+        // Controller Change number=10 sets the "panning position",
+        // which is supposed to divide the keyboard into portions,
+        // presumably bass and treble. These values are a bit odd
+        // however and it's not clear how to use them, e.g.,
+        // track 2: value = 52, track 3: value = 76
+        //this.setState({ panBoundary: event.value });
       }
     } else if (event.name === "Set Tempo") {
       const tempoRatio = 1 + (parseFloat(event.data) - parseFloat(this.state.baseTempo)) / parseFloat(this.state.baseTempo);
       const playbackTempo = parseFloat(this.state.sliderTempo) * tempoRatio;
       
       this.state.samplePlayer.setTempo(playbackTempo);
-      this.setState({tempoRatio, playbackTempo})
+      this.setState({tempoRatio, playbackTempo});
     }
 
     // The scrollTimer should ensure that the roll is synchronized with
@@ -496,25 +494,22 @@ class App extends Component {
     /* PAN VIEWPORT IMAGE */
 
     // If this is fired from the scrollTimer event (quite likely) the tick
-    // argument will be undefined, so we get it from the 
+    // argument will be undefined, so we get it from the player itself.
     if ((typeof(tick) === 'undefined') || isNaN(tick) || (tick === null)) {
       tick = this.state.samplePlayer.getCurrentTick();
     }
 
-    //this.state.osdRef.current.openSeadragon.viewport.fitHorizontally(true);
     let viewportBounds = this.state.osdRef.current.openSeadragon.viewport.getBounds();
-    //console.log("BOUNDS", viewportBounds);
 
-    let linePx = this.state.firstHolePx + tick; // Craig says this will work
-    //console.log("IMAGE Y COORD OF LINE IN PX",linePx);
+    // Thanks to Craig, MIDI tick numbers correspond to pixels from the first
+    // hole of the roll.
+    let linePx = this.state.firstHolePx + tick;
 
     let lineViewport = this.state.osdRef.current.openSeadragon.viewport.imageToViewportCoordinates(0,linePx);
-    //console.log("VIEWPORT COORDS OF HOLE LINE",lineViewport);
+
     let lineCenter = new OpenSeadragon.Point(viewportBounds.width / 2.0, lineViewport.y);
     this.state.osdRef.current.openSeadragon.viewport.panTo(lineCenter);
 
-    //let playLine = this.state.osdRef.current.openSeadragon.viewport.viewer.getOverlayById('play-line');
-    //playLine.update(lineViewport, OpenSeadragon.Placement.TOP_LEFT);
 
     let targetProgress = parseFloat(tick) / this.state.totalTicks;
     let playProgress = Math.max(0, targetProgress);
@@ -537,9 +532,8 @@ class App extends Component {
       (instrument) => this.setState({ instrument, sampleInst: newInstName }));
   }
 
+  // This is for playing notes manually pressed (clicked) on the keyboard
   midiNotePlayer(noteNumber, trueIfOn, prevActiveNotes) {
-    //console.log("MANUAL NOTE",noteNumber,"ON",trueIfOn);
-    //console.log("PREVIOUS ACTIVE NOTES",prevActiveNotes);
 
     let lastNotes = {...this.state.lastNotes};
     const noteName = this.getNoteName(noteNumber);
@@ -567,7 +561,6 @@ class App extends Component {
       try {
         noteNode.stop();
       } catch(error) {
-        //console.log("ERROR STOPPING NOTE",noteNumber,error);
       }
       delete lastNotes[noteName];
     }
@@ -620,16 +613,6 @@ class App extends Component {
 
   render() {
 
-    //const manifestUrl = "https://purl.stanford.edu/dj406yq6980/iiif/manifest";
-    //let currentTime = (this.state.ac == null) ? 0 : this.state.ac.currentTime;
-
-    /*
-    let pctRemaining = 100;
-    if (this.state.samplePlayer !== null) {
-      pctRemaining = this.state.samplePlayer.getSongPercentRemaining().toFixed(2);
-    }
-    */
-
     return (
       <div className="App">
         <div className="flex-container" style={{display: "flex", flexDirection: "row", justifyContent: "space-around", width: "1000px" }}>
@@ -645,8 +628,8 @@ class App extends Component {
             <div style={{textAlign: "left"}}>
               <div>Tempo: <input type="range" min="0" max="180" value={this.state.sliderTempo} className="slider" id="tempoSlider" onChange={this.updateTempoSlider} /> {this.state.sliderTempo} bpm</div>
               <div>Master Volume: <input type="range" min="0" max="4" step=".1" value={this.state.volumeRatio} className="slider" id="masterVolumeSlider" name="volume" onChange={this.updateVolumeSlider} /> {this.state.volumeRatio}</div>
-              <div>Left Volume: <input type="range" min="0" max="4" step=".1" value={this.state.leftVolumeRatio} className="slider" id="leftVolumeSlider" name="left" onChange={this.updateVolumeSlider} /> {this.state.leftVolumeRatio}</div>
-              <div>Right Volume: <input type="range" min="0" max="4" step=".1" value={this.state.rightVolumeRatio} className="slider" id="rightVolumeSlider" name="right" onChange={this.updateVolumeSlider} /> {this.state.rightVolumeRatio}</div>
+              <div>Bass Volume: <input type="range" min="0" max="4" step=".1" value={this.state.leftVolumeRatio} className="slider" id="leftVolumeSlider" name="left" onChange={this.updateVolumeSlider} /> {this.state.leftVolumeRatio}</div>
+              <div>Treble Volume: <input type="range" min="0" max="4" step=".1" value={this.state.rightVolumeRatio} className="slider" id="rightVolumeSlider" name="right" onChange={this.updateVolumeSlider} /> {this.state.rightVolumeRatio}</div>
               <div>Progress: <input type="range" min="0" max="1" step=".01" value={this.state.currentProgress} className="slider" id="progress" onChange={this.skipToProgress} /> {(this.state.currentProgress * 100.).toFixed(2)+"%"} </div>
             </div>
           </div>
