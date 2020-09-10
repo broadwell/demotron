@@ -39,7 +39,7 @@ class App extends Component {
       baseTempo: null,
       tempoRatio: 1.0, // To keep track of gradual roll acceleration
       sliderTempo: 60.0,
-      playbackTempo: 0, // Combines slider and tempo ratio
+      playbackTempo: 0.0, // Combines slider and tempo ratio
       ac: null,
       currentTick: 0,
       currentProgress: 0.0,
@@ -65,6 +65,7 @@ class App extends Component {
     this.updateADSR = this.updateADSR.bind(this);
     this.skipToProgress = this.skipToProgress.bind(this);
     this.skipToPixel = this.skipToPixel.bind(this);
+    this.skipToTick = this.skipToTick.bind(this);
     this.skipTo = this.skipTo.bind(this);
     this.getOSDref = this.getOSDref.bind(this);
     this.panViewportToTick = this.panViewportToTick.bind(this);
@@ -169,6 +170,12 @@ class App extends Component {
     this.skipTo(targetTick, targetProgress);
   }
 
+  skipToTick(targetTick) {
+    const targetProgress = parseFloat(targetTick) / parseFloat(this.state.totalTicks);
+
+    this.skipTo(targetTick, targetProgress);
+  }
+
   skipTo(targetTick, targetProgress) {
     if (!this.state.samplePlayer) {
       return;
@@ -183,7 +190,7 @@ class App extends Component {
     if (this.state.samplePlayer.isPlaying()) {
       this.state.samplePlayer.pause();
       this.state.samplePlayer.skipToTick(playTick);
-      this.setState({ lastNotes: {}, activeNotes: [], sustainedNotes: {}, currentProgress: playProgress  });
+      this.setState({ lastNotes: {}, activeNotes: [], sustainedNotes: {}, currentProgress: playProgress });
       this.state.samplePlayer.play();
     } else {
       this.state.samplePlayer.skipToTick(playTick);
@@ -192,10 +199,14 @@ class App extends Component {
   }
 
   updateTempoSlider(event) {
+
     const playbackTempo = event.target.value * this.state.tempoRatio;
-    // XXX Player jumps back on shift to slower playback tempo, forward on 
-    // shift to faster tempo. Why???
+
+    // If not paused during tempo change, player jumps back a bit on
+    // shift to slower playback tempo, forward on shift to faster tempo.
+    this.state.samplePlayer.pause();
     this.state.samplePlayer.setTempo(playbackTempo);
+    this.state.samplePlayer.play();
     this.setState({sliderTempo: event.target.value, playbackTempo});
   }
 
@@ -628,6 +639,7 @@ class App extends Component {
               <strong>Performer:</strong> {this.state.rollMetadata['PERFORMER']}<br />
               <strong>Composer:</strong> {this.state.rollMetadata['COMPOSER']}<br />
             </div>
+            <hr />
             <button id="pause" onClick={this.playPauseSong} style={{background: (this.state.playState === "paused" ? "lightgray" : "white")}}>Play/Pause</button>
             <button id="stop" onClick={this.stopSong} style={{background: "white"}}>Stop</button>
             <div style={{textAlign: "left"}}>
@@ -644,6 +656,7 @@ class App extends Component {
               <strong>PURL:</strong> <a href={this.state.rollMetadata['PURL']}>{this.state.rollMetadata['PURL']}</a><br />
               <strong>Call No:</strong> {this.state.rollMetadata['CALLNUM']}<br />
             </div>
+            <hr />
             <div>
               <label htmlFor="sampleInstrument">
                 Sample instrument:{" "}
@@ -668,7 +681,7 @@ class App extends Component {
               <div>Release: <input disabled type="range" min="0" max="1" step=".1" value={this.state.adsr['release']} className="slider" id="release" onChange={this.updateADSR}/> {this.state.adsr['release']}</div>          
             </div>
           </div>
-        </div>
+        </div>  
         <Piano
           noteRange={{ first: 21, last: 108 }}
           playNote={(midiNumber) => {
