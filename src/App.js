@@ -423,9 +423,9 @@ class App extends Component {
       // 127 is down (on), 0 is up (off)
       if ((event.number == 64) && !this.state.sustainPedalLocked) {
         if (event.value == 127) {
-          this.changeSustainPedal(false);
-        } else if (event.value == 0) {
           this.changeSustainPedal(true);
+        } else if (event.value == 0) {
+          this.changeSustainPedal(false);
         }
       // 67 is the soft (una corda) pedal
       } else if (event.number == 67 && !this.state.softPedalLocked) {
