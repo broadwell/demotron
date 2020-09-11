@@ -233,6 +233,117 @@ class App extends Component {
 
     MidiSamplePlayer.on('fileLoaded', () => {
       console.log("data loaded");
+
+      this.state.osdRef.current.openSeadragon.viewport.fitHorizontally(true);
+
+      let viewportBounds = this.state.osdRef.current.openSeadragon.viewport.getBounds();
+  
+      // This will do a "dry run" of the playback and set all event timings.
+      // Should already done by this point... (?)
+      //MidiSamplePlayer.fileLoaded();
+
+      let pedalMap = new IntervalTree();
+
+      // Pedal events should be duplicated on each track, but best not to assume
+      // this will always be the case. Assume however that the events are
+      // always temporally ordered in each track.
+      let trackNumber = 0;
+      MidiSamplePlayer.events.forEach((track) => {
+        let sustainOn = false;
+        let softOn = false;
+        let sustainStart = 0;
+        let softStart = 0;
+        trackNumber += 1;
+        track.forEach((event) => {
+          if (event.name === "Controller Change") {
+            // Sustain pedal on/off
+            if (event.number == 64) {
+              if ((event.value == 127) && (sustainOn != true)) {
+                sustainOn = true;
+                sustainStart = event.tick;
+              } else if (event.value == 0) {
+                sustainOn = false;
+                pedalMap.insert(sustainStart, event.tick, "sustain");
+              }
+            // Soft pedal on/off
+            } else if (event.number == 67) {
+              // Consecutive "on" events just mean "yep, still on" ??
+              if ((event.value == 127) && (softOn != true)) {
+                softOn = true;
+                softStart = event.tick;
+              } else if (event.value == 0) {
+                softOn = false;
+                pedalMap.insert(softStart, event.tick, "soft");
+              }
+            }
+          }
+        });
+      });
+
+      let firstHolePx = 0;
+      let lastHolePx = 0;
+      let holeWidthPx = 0;
+      let baseTempo = null;
+      let earliestTempoTick = null;
+      let rollMetadata = {};
+      const metadataRegex = /^@(?<key>[^:]*):[\t\s]*(?<value>.*)$/;
+
+      MidiSamplePlayer.events[0].forEach((event) => {
+        /* Tempo events *should* be in order, and the tempo *should* only ever
+        * increase... but we'll play it safe. */
+        if (event.name === "Set Tempo") {
+          if ((earliestTempoTick === null) || (event.tick < earliestTempoTick)) {
+            baseTempo = event.data;
+            earliestTempoTick = event.tick;
+          }
+        } else if (event.name === "Text Event") {
+          let text = event.string;
+          if (!text) return;
+          /* @IMAGE_WIDTH and @IMAGE_LENGTH should be the same as from viewport._contentSize
+          * Can't think of why they wouldn't be, but maybe check anyway. Would need to scale
+          * all pixel values if so.
+          * Other potentially useful values, e.g., for drawing overlays:
+          * @ROLL_WIDTH (this is smaller than the image width)
+          * @HARD_MARGIN_TREBLE
+          * @HARD_MARGIN_BASS
+          * @HOLE_SEPARATION
+          * @HOLE_OFFSET
+          * All of the source/performance/recording metadata is in this track as well.
+          */
+          const found = text.match(metadataRegex);
+          rollMetadata[found.groups.key] = found.groups.value;
+        }
+      });
+
+      firstHolePx = parseInt(rollMetadata['FIRST_HOLE']);
+      lastHolePx = parseInt(rollMetadata['LAST_HOLE']);
+      holeWidthPx = parseInt(rollMetadata['AVG_HOLE_WIDTH']);
+
+      let firstLineViewport = this.state.osdRef.current.openSeadragon.viewport.imageToViewportCoordinates(0,firstHolePx);
+
+      let bounds = new OpenSeadragon.Rect(0.0,firstLineViewport.y - (viewportBounds.height / 2.0),viewportBounds.width, viewportBounds.height);
+      this.state.osdRef.current.openSeadragon.viewport.fitBounds(bounds, true);
+
+      let homeZoom = this.state.osdRef.current.openSeadragon.viewport.getZoom();
+
+      /*
+      // Play line can be drawn via CSS (though not as accurately), but very
+      // similar code to this would be used to show other overlays, e.g., to
+      // "fill" in actively playing notes and other mechanics. Performance is
+      // an issue, though.
+      let startBounds = this.state.osdRef.current.openSeadragon.viewport.getBounds();
+      let playPoint = new OpenSeadragon.Point(0, startBounds.y + (startBounds.height / 2.0));
+      let playLine = this.state.osdRef.current.openSeadragon.viewport.viewer.getOverlayById('play-line');
+      if (!playLine) {
+        playLine = document.createElement("div");
+        playLine.id = "play-line";
+        this.state.osdRef.current.openSeadragon.viewport.viewer.addOverlay(playLine, playPoint, OpenSeadragon.Placement.TOP_LEFT);
+      } else {
+        playLine.update(playPoint, OpenSeadragon.Placement.TOP_LEFT);
+      }
+      */
+      this.setState({ samplePlayer: MidiSamplePlayer, instrument: inst, totalTicks: MidiSamplePlayer.totalTicks, firstHolePx, baseTempo, homeZoom, rollMetadata, pedalMap });
+
     });
     
     MidiSamplePlayer.on('playing', currentTick => {
@@ -252,115 +363,6 @@ class App extends Component {
     /* Load MIDI data */
     MidiSamplePlayer.loadDataUri(this.state.currentSong);
 
-    this.state.osdRef.current.openSeadragon.viewport.fitHorizontally(true);
-
-    let viewportBounds = this.state.osdRef.current.openSeadragon.viewport.getBounds();
- 
-    // This will do a "dry run" of the playback and set all event timings.
-    // Should already done by this point... (?)
-    //MidiSamplePlayer.fileLoaded();
-
-    let pedalMap = new IntervalTree();
-
-    // Pedal events should be duplicated on each track, but best not to assume
-    // this will always be the case. Assume however that the events are
-    // always temporally ordered in each track.
-    let trackNumber = 0;
-    MidiSamplePlayer.events.forEach((track) => {
-      let sustainOn = false;
-      let softOn = false;
-      let sustainStart = 0;
-      let softStart = 0;
-      trackNumber += 1;
-      track.forEach((event) => {
-        if (event.name === "Controller Change") {
-          // Sustain pedal on/off
-          if (event.number == 64) {
-            if ((event.value == 127) && (sustainOn != true)) {
-              sustainOn = true;
-              sustainStart = event.tick;
-            } else if (event.value == 0) {
-              sustainOn = false;
-              pedalMap.insert(sustainStart, event.tick, "sustain");
-            }
-          // Soft pedal on/off
-          } else if (event.number == 67) {
-            // Consecutive "on" events just mean "yep, still on" ??
-            if ((event.value == 127) && (softOn != true)) {
-              softOn = true;
-              softStart = event.tick;
-            } else if (event.value == 0) {
-              softOn = false;
-              pedalMap.insert(softStart, event.tick, "soft");
-            }
-          }
-        }
-      });
-    });
-
-    let firstHolePx = 0;
-    let lastHolePx = 0;
-    let holeWidthPx = 0;
-    let baseTempo = null;
-    let earliestTempoTick = null;
-    let rollMetadata = {};
-    const metadataRegex = /^@(?<key>[^:]*):[\t\s]*(?<value>.*)$/;
-
-    MidiSamplePlayer.events[0].forEach((event) => {
-      /* Tempo events *should* be in order, and the tempo *should* only ever
-       * increase... but we'll play it safe. */
-      if (event.name === "Set Tempo") {
-        if ((earliestTempoTick === null) || (event.tick < earliestTempoTick)) {
-          baseTempo = event.data;
-          earliestTempoTick = event.tick;
-        }
-      } else if (event.name === "Text Event") {
-        let text = event.string;
-        if (!text) return;
-        /* @IMAGE_WIDTH and @IMAGE_LENGTH should be the same as from viewport._contentSize
-        * Can't think of why they wouldn't be, but maybe check anyway. Would need to scale
-        * all pixel values if so.
-        * Other potentially useful values, e.g., for drawing overlays:
-        * @ROLL_WIDTH (this is smaller than the image width)
-        * @HARD_MARGIN_TREBLE
-        * @HARD_MARGIN_BASS
-        * @HOLE_SEPARATION
-        * @HOLE_OFFSET
-        * All of the source/performance/recording metadata is in this track as well.
-        */
-        const found = text.match(metadataRegex);
-        rollMetadata[found.groups.key] = found.groups.value;
-      }
-    });
-
-    firstHolePx = parseInt(rollMetadata['FIRST_HOLE']);
-    lastHolePx = parseInt(rollMetadata['LAST_HOLE']);
-    holeWidthPx = parseInt(rollMetadata['AVG_HOLE_WIDTH']);
-
-    let firstLineViewport = this.state.osdRef.current.openSeadragon.viewport.imageToViewportCoordinates(0,firstHolePx);
-
-    let bounds = new OpenSeadragon.Rect(0.0,firstLineViewport.y - (viewportBounds.height / 2.0),viewportBounds.width, viewportBounds.height);
-    this.state.osdRef.current.openSeadragon.viewport.fitBounds(bounds, true);
-
-    let homeZoom = this.state.osdRef.current.openSeadragon.viewport.getZoom();
-
-    /*
-    // Play line can be drawn via CSS (though not as accurately), but very
-    // similar code to this would be used to show other overlays, e.g., to
-    // "fill" in actively playing notes and other mechanics. Performance is
-    // an issue, though.
-    let startBounds = this.state.osdRef.current.openSeadragon.viewport.getBounds();
-    let playPoint = new OpenSeadragon.Point(0, startBounds.y + (startBounds.height / 2.0));
-    let playLine = this.state.osdRef.current.openSeadragon.viewport.viewer.getOverlayById('play-line');
-    if (!playLine) {
-      playLine = document.createElement("div");
-      playLine.id = "play-line";
-      this.state.osdRef.current.openSeadragon.viewport.viewer.addOverlay(playLine, playPoint, OpenSeadragon.Placement.TOP_LEFT);
-    } else {
-      playLine.update(playPoint, OpenSeadragon.Placement.TOP_LEFT);
-    }
-    */
-    this.setState({ samplePlayer: MidiSamplePlayer, instrument: inst, totalTicks: MidiSamplePlayer.totalTicks, firstHolePx, baseTempo, homeZoom, rollMetadata, pedalMap });
   }
 
   midiEvent(event) {
