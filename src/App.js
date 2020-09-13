@@ -24,16 +24,16 @@ class App extends Component {
     super(props);
 
     this.state = {
-      activeNotes: [], // For the piano vis; these should be MIDI numbers
+      activeNotes: [], // Notes currently being pressed, must be MIDI numbers (integers)
       currentSong: null, // Song data in base64 format
-      samplePlayer: null,
+      samplePlayer: null, // The MidiPlayer object (sample = soundfont, not synth)
       playState: "stopped",
-      instrument: null,
-      gainNode: null,
+      instrument: null, // The Soundfont player "instrument"
+      gainNode: null, // For modifying output volume
       adsr: ADSR_SAMPLE_DEFAULTS,
       totalTicks: 0,
       sampleInst: 'acoustic_grand_piano',
-      lastNotes: {}, // To handle velocity=0 "note off" events
+      activeAudioNodes: {}, // Maps note MIDI numbers to playback node objects
       volumeRatio: 1.0,
       leftVolumeRatio: 1.0,
       rightVolumeRatio: 1.0,
@@ -41,17 +41,17 @@ class App extends Component {
       tempoRatio: 1.0, // To keep track of gradual roll acceleration
       sliderTempo: 60.0,
       playbackTempo: 0.0, // Combines slider and tempo ratio
-      ac: null,
+      ac: null, // The master audio context
       currentTick: 0,
       currentProgress: 0.0,
-      osdRef: null,
+      osdRef: null, // Backdoor pointer to the OpenSeadragon component
       firstHolePx: 0, // This + ticks = current pixel position
-      scrollTimer: null,
+      scrollTimer: null, // Fires every 1/x seconds to advance the scroll
       sustainPedalOn: false,
       softPedalOn: false,
       sustainPedalLocked: false,
       softPedalLocked: false,
-      sustainedNotes: {},
+      sustainedNotes: [], // All the note (numbers) being held by the pedal
       homeZoom: null,
       rollMetadata: {},
       panBoundary: HALF_BOUNDARY,
@@ -75,7 +75,8 @@ class App extends Component {
     this.midiNotePlayer = this.midiNotePlayer.bind(this);
     this.getNoteName = this.getNoteName.bind(this);
     this.togglePedalLock = this.togglePedalLock.bind(this);
-    this.changeSustainPedal = this.changeSustainPedal.bind(this);
+    this.sustainPedalOn = this.sustainPedalOn.bind(this);
+    this.sustainPedalOff = this.sustainPedalOff.bind(this);
   }
 
   componentDidMount() {
@@ -93,7 +94,7 @@ class App extends Component {
 
     let currentSong = mididata['magic_fire'];
 
-    this.setState({ac, currentSong});
+    this.setState({ac, gainNode, currentSong});
 
     // Instantiate the sample-based player
     // Custom soundfouts can be loaded via a URL. They should be in
@@ -105,7 +106,8 @@ class App extends Component {
   getOSDref(osdRef) {
 
     this.setState({osdRef});
-    osdRef.current.openSeadragon.viewport.viewer.addHandler("canvas-drag", (e) => {
+    // On drag, advance (or rewind) the player to the center of the visible roll
+    osdRef.current.openSeadragon.viewport.viewer.addHandler("canvas-drag", () => {
       let center = osdRef.current.openSeadragon.viewport.getCenter();
       let centerCoords = osdRef.current.openSeadragon.viewport.viewportToImageCoordinates(center);
       this.skipToPixel(centerCoords.y);
@@ -131,10 +133,12 @@ class App extends Component {
 
       this.state.samplePlayer.stop();
       clearInterval(this.state.scrollTimer);
-      this.setState({ playState: "stopped", scrollTimer: null, lastNotes: {}, activeNotes: [], sustainedNotes: {} });
+      this.setState({ playState: "stopped", scrollTimer: null, activeAudioNodes: {}, activeNotes: [], sustainedNotes: [] });
       this.panViewportToTick(0);
     }
   }
+
+  /* Perhaps these "skipToX" functions could be consolidated... */
 
   skipToPixel(yPixel) {
     const targetTick = yPixel - this.state.firstHolePx;
@@ -177,7 +181,7 @@ class App extends Component {
     if (this.state.samplePlayer.isPlaying()) {
       this.state.samplePlayer.pause();
       this.state.samplePlayer.skipToTick(playTick);
-      this.setState({ lastNotes: {}, activeNotes: [], sustainedNotes: {}, currentProgress: playProgress });
+      this.setState({ activeAudioNodes: {}, activeNotes: [], sustainedNotes: [], currentProgress: playProgress });
       this.state.samplePlayer.play();
     } else {
       this.state.samplePlayer.skipToTick(playTick);
@@ -192,6 +196,7 @@ class App extends Component {
 
     // If not paused during tempo change, player jumps back a bit on
     // shift to slower playback tempo, forward on shift to faster tempo.
+    // So we pause it.
     this.state.samplePlayer.pause();
     this.state.samplePlayer.setTempo(playbackTempo);
     this.state.samplePlayer.play();
@@ -242,6 +247,14 @@ class App extends Component {
       // Should already done by this point... (?)
       //MidiSamplePlayer.fileLoaded();
 
+      let firstHolePx = 0;
+      let lastHolePx = 0;
+      let holeWidthPx = 0;
+      let baseTempo = null;
+      let earliestTempoTick = null;
+      let rollMetadata = {};
+      const metadataRegex = /^@(?<key>[^:]*):[\t\s]*(?<value>.*)$/;
+
       let pedalMap = new IntervalTree();
 
       // Pedal events should be duplicated on each track, but best not to assume
@@ -276,43 +289,29 @@ class App extends Component {
                 pedalMap.insert(softStart, event.tick, "soft");
               }
             }
+          } else if (event.name === "Set Tempo") {
+            if ((earliestTempoTick === null) || (event.tick < earliestTempoTick)) {
+              baseTempo = event.data;
+              earliestTempoTick = event.tick;
+            }
+          } else if (event.name === "Text Event") {
+            let text = event.string;
+            if (!text) return;
+            /* @IMAGE_WIDTH and @IMAGE_LENGTH should be the same as from viewport._contentSize
+            * Can't think of why they wouldn't be, but maybe check anyway. Would need to scale
+            * all pixel values if so.
+            * Other potentially useful values, e.g., for drawing overlays:
+            * @ROLL_WIDTH (this is smaller than the image width)
+            * @HARD_MARGIN_TREBLE
+            * @HARD_MARGIN_BASS
+            * @HOLE_SEPARATION
+            * @HOLE_OFFSET
+            * All of the source/performance/recording metadata is in this track as well.
+            */
+            const found = text.match(metadataRegex);
+            rollMetadata[found.groups.key] = found.groups.value;
           }
         });
-      });
-
-      let firstHolePx = 0;
-      let lastHolePx = 0;
-      let holeWidthPx = 0;
-      let baseTempo = null;
-      let earliestTempoTick = null;
-      let rollMetadata = {};
-      const metadataRegex = /^@(?<key>[^:]*):[\t\s]*(?<value>.*)$/;
-
-      MidiSamplePlayer.events[0].forEach((event) => {
-        /* Tempo events *should* be in order, and the tempo *should* only ever
-        * increase... but we'll play it safe. */
-        if (event.name === "Set Tempo") {
-          if ((earliestTempoTick === null) || (event.tick < earliestTempoTick)) {
-            baseTempo = event.data;
-            earliestTempoTick = event.tick;
-          }
-        } else if (event.name === "Text Event") {
-          let text = event.string;
-          if (!text) return;
-          /* @IMAGE_WIDTH and @IMAGE_LENGTH should be the same as from viewport._contentSize
-          * Can't think of why they wouldn't be, but maybe check anyway. Would need to scale
-          * all pixel values if so.
-          * Other potentially useful values, e.g., for drawing overlays:
-          * @ROLL_WIDTH (this is smaller than the image width)
-          * @HARD_MARGIN_TREBLE
-          * @HARD_MARGIN_BASS
-          * @HOLE_SEPARATION
-          * @HOLE_OFFSET
-          * All of the source/performance/recording metadata is in this track as well.
-          */
-          const found = text.match(metadataRegex);
-          rollMetadata[found.groups.key] = found.groups.value;
-        }
       });
 
       firstHolePx = parseInt(rollMetadata['FIRST_HOLE']);
@@ -371,63 +370,78 @@ class App extends Component {
     if (event.name === 'Note on') {
 
       const noteNumber = event.noteNumber;
-      const noteName = this.getNoteName(noteNumber);
+      //const noteName = this.getNoteName(noteNumber);
       let noteVelocity = event.velocity;
-      let lastNotes = {...this.state.lastNotes};
+      let activeAudioNodes = {...this.state.activeAudioNodes};
       let activeNotes = [...this.state.activeNotes];
-      let sustainedNotes = {...this.state.sustainedNotes};
+      let sustainedNotes = [...this.state.sustainedNotes];
 
+      // Note off
       if (noteVelocity === 0) {
-        if ((noteName in this.state.lastNotes) && (!(noteName in this.state.sustainedNotes))) {
+        if ((noteNumber in this.state.activeAudioNodes) && (!this.state.sustainedNotes.includes(noteNumber))) {
           try {
-            this.state.lastNotes[noteName].stop();
+            activeAudioNodes[noteNumber].stop();
           } catch {
             console.log("COULDN'T STOP NOTE, PROBABLY DUE TO WEIRD ADSR VALUES, RESETTING");
             this.setState({ adsr: ADSR_SAMPLE_DEFAULTS });
           }
-          delete lastNotes[noteName];
+          activeAudioNodes[noteNumber] = null;
         }
-        while(activeNotes.includes(noteNumber)) {
-          activeNotes.splice(activeNotes.indexOf(noteNumber), 1);
+        while(activeNotes.includes(parseInt(noteNumber))) {
+          activeNotes.splice(activeNotes.indexOf(parseInt(noteNumber)), 1);
         }
-        this.setState({ lastNotes, activeNotes });
+        this.setState({ activeAudioNodes, activeNotes });
+      
+      // Note on
       } else {
+        if (sustainedNotes.includes(noteNumber)) {
+          try {
+            activeAudioNodes[noteNumber].stop();
+          } catch {
+            console.log("Tried and failed to stop sustained note being re-touched",noteNumber);
+          }
+          activeAudioNodes[noteNumber] = null;
+        }
+
         let updatedVolume = noteVelocity/100.0 * this.state.volumeRatio;
         if (this.state.softPedalOn) {
           updatedVolume *= SOFT_PEDAL_RATIO;
         }
-        if (noteNumber < this.state.panBoundary) {
+        if (parseInt(noteNumber) < this.state.panBoundary) {
           updatedVolume *= this.state.leftVolumeRatio;
-        } else if (noteNumber >= this.state.panBoundary) {
+        } else if (parseInt(noteNumber) >= this.state.panBoundary) {
           updatedVolume *= this.state.rightVolumeRatio;
         }
 
         try {
           let adsr = [this.state.adsr['attack'], this.state.adsr['decay'], this.state.adsr['sustain'], this.state.adsr['release']];
-          let noteNode = this.state.instrument.play(noteName, this.state.ac.currentTime, { gain: updatedVolume, adsr });
-          if (this.state.sustainPedalOn) {
-            sustainedNotes[noteName] = noteNode;
-          }
-          lastNotes[noteName] = noteNode;
+          
+          let noteNode = this.state.instrument.play(noteNumber, this.state.ac.currentTime, { gain: updatedVolume, adsr });
+          activeAudioNodes[noteNumber] = noteNode;
         } catch {
           // Get rid of this eventually
           console.log("IMPOSSIBLE ADSR VALUES FOR THIS NOTE, RESETTING");
           let adsr = [ADSR_SAMPLE_DEFAULTS['attack'], ADSR_SAMPLE_DEFAULTS['decay'], ADSR_SAMPLE_DEFAULTS['sustain'], ADSR_SAMPLE_DEFAULTS['release']];
-          let noteNode = this.state.instrument.play(noteName, this.state.ac.currentTime, { gain: updatedVolume, adsr });
-          lastNotes[noteName] = noteNode;
+          let noteNode = this.state.instrument.play(noteNumber, this.state.ac.currentTime, { gain: updatedVolume, adsr });
+          activeAudioNodes[noteNumber] = noteNode;
           this.setState({adsr: ADSR_SAMPLE_DEFAULTS});
         }
-        activeNotes.push(noteNumber);
-        this.setState({lastNotes, activeNotes, sustainedNotes});
+        if (this.state.sustainPedalOn && !sustainedNotes.includes(noteNumber)) {
+          sustainedNotes.push(noteNumber);
+        }
+        if (!activeNotes.includes(noteNumber)) {
+          activeNotes.push(parseInt(noteNumber));
+        }
+        this.setState({activeAudioNodes, activeNotes, sustainedNotes});
       }
     } else if (event.name === "Controller Change") {
       // Controller Change number=64 is a sustain pedal event;
       // 127 is down (on), 0 is up (off)
       if ((event.number == 64) && !this.state.sustainPedalLocked) {
         if (event.value == 127) {
-          this.changeSustainPedal(true);
+          this.sustainPedalOn();
         } else if (event.value == 0) {
-          this.changeSustainPedal(false);
+          this.sustainPedalOff();
         }
       // 67 is the soft (una corda) pedal
       } else if (event.number == 67 && !this.state.softPedalLocked) {
@@ -460,36 +474,36 @@ class App extends Component {
 
   }
 
-  changeSustainPedal(trueIfOn) {
-    if (trueIfOn) {
-      let sustainedNotes = {};
-      this.state.activeNotes.forEach((noteNumber) => {
-        const noteName = this.getNoteName(noteNumber);
-        sustainedNotes[noteName] = this.state.lastNotes[noteName];
-      });
-      this.setState({ sustainPedalOn: true, sustainedNotes });
-    } else {
-      let lastNotes = {...this.state.lastNotes};
-      Object.keys(this.state.sustainedNotes).forEach((noteName) => {
-        if (typeof(this.state.sustainedNotes[noteName]) === 'undefined') {
-          return;
-        }
-        let noteNumber = this.getMidiNumber(noteName);
-        if (!(this.state.activeNotes.includes(noteNumber))) {
-          // XXX Maybe use a slower release velocity for pedal events?
-          if (typeof(this.state.sustainedNotes[noteName].stop === 'function')) {
-            try {
-              this.state.sustainedNotes[noteName].stop();
-            } catch {
-              // XXX This can happen with manual keyboard note entry
-              console.log("TRIED TO UNSUSTAIN AN ALREADY STOPPED NOTE");
-            }
-          }
-          delete lastNotes[noteName];
-        }
-      });
-      this.setState({ sustainPedalOn: false, sustainedNotes: {}, lastNotes });
+  sustainPedalOn() {
+    let sustainedNotes = [...this.state.sustainedNotes];
+    // XXX Lazy state updates mean that sustainedNotes may not be cleared
+    // by the next pedal on event
+    if (this.state.sustainPedalOn) {
+      this.sustainPedalOff();
+      sustainedNotes = [];
     }
+    this.state.activeNotes.forEach((noteNumber) => {
+      if (!sustainedNotes.includes(noteNumber)) {
+        sustainedNotes.push(noteNumber)
+      }
+    });
+    this.setState({ sustainPedalOn: true, sustainedNotes });
+  }
+
+  sustainPedalOff() {
+    let activeAudioNodes = {...this.state.activeAudioNodes};
+    this.state.sustainedNotes.forEach((noteNumber) => {
+      if (!(this.state.activeNotes.includes(parseInt(noteNumber)))) {
+        // XXX Maybe use a slower release velocity for pedal events?
+        try {
+          this.state.activeAudioNodes[noteNumber].stop();
+        } catch {
+          console.log("FAILED TO UNSUSTAIN",noteNumber);
+        }
+        activeAudioNodes[noteNumber] = null;
+      }
+    });
+    this.setState({ sustainPedalOn: false, activeAudioNodes, sustainedNotes: [] });
   }
 
   panViewportToTick(tick) {
@@ -511,7 +525,6 @@ class App extends Component {
 
     let lineCenter = new OpenSeadragon.Point(viewportBounds.width / 2.0, lineViewport.y);
     this.state.osdRef.current.openSeadragon.viewport.panTo(lineCenter);
-
 
     let targetProgress = parseFloat(tick) / this.state.totalTicks;
     let playProgress = Math.max(0, targetProgress);
@@ -535,44 +548,52 @@ class App extends Component {
   }
 
   // This is for playing notes manually pressed (clicked) on the keyboard
-  midiNotePlayer(noteNumber, trueIfOn, prevActiveNotes) {
+  midiNotePlayer(noteNumber, onIfTrue /*, prevActiveNotes*/) {
 
-    let lastNotes = {...this.state.lastNotes};
-    const noteName = this.getNoteName(noteNumber);
-
-    if (trueIfOn) {
+    if (onIfTrue) {
       let updatedVolume = DEFAULT_NOTE_VELOCITY/100.0 * this.state.volumeRatio;
       if (this.state.softPedalOn) {
         updatedVolume *= SOFT_PEDAL_RATIO;
       }
-      if (noteNumber < HALF_BOUNDARY) {
+      if (parseInt(noteNumber) < HALF_BOUNDARY) {
         updatedVolume *= this.state.leftVolumeRatio;
-      } else if (noteNumber >= HALF_BOUNDARY) {
+      } else if (parseInt(noteNumber) >= HALF_BOUNDARY) {
         updatedVolume *= this.state.rightVolumeRatio;
       }
-      let noteNode = this.state.instrument.play(noteName, this.state.ac.currentTime, {gain: updatedVolume, adsr: this.state.adsr });
-      lastNotes[noteName] = noteNode;
+      if (noteNumber in this.state.activeAudioNodes) {
+        try {
+          this.state.activeAudioNodes[noteNumber].stop();
+        } catch {
+          console.log("Keyboard tried and failed to stop playing note to replace it",noteNumber);
+        }
+      }
+      if (this.state.sustainPedalOn && !this.state.sustainedNotes.includes(noteNumber)) {
+        this.setState({ sustainedNotes: [...this.state.sustainedNotes, noteNumber ]});
+      }
+      const audioNode = this.state.instrument.play(noteNumber, this.state.ac.currentTime, {gain: updatedVolume});
+      this.setState({
+        activeAudioNodes: Object.assign({}, this.state.activeAudioNodes, {
+          [noteNumber]: audioNode,
+        }),
+      });
     } else {
-      // XXX This does not work as currently configured -- stop() call always
-      // fails, and the note just eventually times/decays out rather than
-      // responding properly to the "on stop" event.
-      let noteNode = lastNotes[noteName];
-      if (typeof(noteNode) === 'undefined') {
-        return;
-      }
-      try {
-        noteNode.stop();
-      } catch(error) {
-      }
-      delete lastNotes[noteName];
+        if (!this.state.activeAudioNodes[noteNumber] || (this.state.sustainPedalOn && this.state.sustainedNotes.includes(noteNumber))) {
+          return;
+        }
+        const audioNode = this.state.activeAudioNodes[noteNumber];
+        audioNode.stop();
+        this.setState({
+          activeAudioNodes: Object.assign({}, this.state.activeAudioNodes, {
+            [noteNumber]: null,
+          }),
+        });
     }
-    this.setState({ lastNotes });
   }
 
-  getNoteName(midiNumber) {
-    const octave = parseInt(midiNumber / 12) - 1;
-    midiNumber -= 21;
-    const name = SHARP_NOTES[midiNumber % 12];
+  getNoteName(noteNumber) {
+    const octave = parseInt(noteNumber / 12) - 1;
+    noteNumber -= 21;
+    const name = SHARP_NOTES[noteNumber % 12];
     return name + octave;
   }
 
@@ -587,13 +608,13 @@ class App extends Component {
         note += c;
       }
     }
-    let midiNumber = NaN;
+    let noteNumber = NaN;
     if (SHARP_NOTES.includes(note)) {
-      midiNumber = ((octave - 1) * 12) + SHARP_NOTES.indexOf(note) + 21; 
+      noteNumber = ((octave - 1) * 12) + SHARP_NOTES.indexOf(note) + 21; 
     } else if (FLAT_NOTES.includes(note)) {
-      midiNumber = ((octave -1) * 12) + FLAT_NOTES.indexOf(note) + 21; 
+      noteNumber = ((octave -1) * 12) + FLAT_NOTES.indexOf(note) + 21; 
     }
-    return midiNumber;    
+    return noteNumber;    
   }
 
   togglePedalLock(event) {
@@ -602,10 +623,10 @@ class App extends Component {
       if (this.state.sustainPedalLocked) {
         // Release sustained notes
         this.setState({sustainPedalLocked: false });
-        this.changeSustainPedal(false);
+        this.sustainPedalOff();
       } else {
         this.setState({sustainPedalLocked: true });
-        this.changeSustainPedal(true);
+        this.sustainPedalOn();
       }
     } else if (pedalName === "soft") {
       let softPedalLocked = !this.state.softPedalLocked;
@@ -669,18 +690,18 @@ class App extends Component {
         </div>  
         <Piano
           noteRange={{ first: 21, last: 108 }}
-          playNote={(midiNumber) => {
-            //this.midiNotePlayer(midiNumber, true, false, []);
+          playNote={(noteNumber) => {
+            //this.midiNotePlayer(noteNumber, true);
           }}
-          stopNote={(midiNumber) => {
-            //this.midiNotePlayer(midiNumber, false, false, []);
+          stopNote={(noteNumber) => {
+            //this.midiNotePlayer(noteNumber, false);
           }}
           width={1000}
-          onPlayNoteInput={(midiNumber, { prevActiveNotes }) => {
-            this.midiNotePlayer(midiNumber, true, prevActiveNotes);
+          onPlayNoteInput={(noteNumber) => {
+            this.midiNotePlayer(noteNumber, true);
           }}
-          onStopNoteInput={(midiNumber, { prevActiveNotes }) => {
-            this.midiNotePlayer(midiNumber, false, prevActiveNotes);
+          onStopNoteInput={(noteNumber) => {
+            this.midiNotePlayer(noteNumber, false);
           }}
           // keyboardShortcuts={keyboardShortcuts}
           activeNotes={this.state.activeNotes}
