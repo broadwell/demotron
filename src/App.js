@@ -7,8 +7,10 @@ import MultiViewer from "./react-iiif-viewer/src/components/MultiViewer";
 import OpenSeadragon from 'openseadragon';
 import { Piano, KeyboardShortcuts } from 'react-piano';
 import 'react-piano/dist/styles.css';
-import fz_p1 from './images/feuerzauber_p1.gif';
+// import fz_p1 from './images/feuerzauber_p1.gif';
 import IntervalTree from 'node-interval-tree';
+import verovio from 'verovio';
+import parse from 'html-react-parser';
 
 const ADSR_SAMPLE_DEFAULTS = { attack: 0.01, decay: 0.1, sustain: 0.9, release: 0.3 };
 const UPDATE_INTERVAL_MS = 100;
@@ -17,7 +19,8 @@ const FLAT_NOTES = ["A", "Bb", "B", "C", "Db", "D", "Eb", "E", "F", "Gb", "G", "
 const SOFT_PEDAL_RATIO = .67;
 const DEFAULT_NOTE_VELOCITY = 33.0;
 const HALF_BOUNDARY = 66; // F# above Middle C; divides the keyboard into two "pans"
-const imageUrl = "https://stacks.stanford.edu/image/iiif/dj406yq6980%252Fdj406yq6980_0001/info.json";
+//const IMAGE_URL = "https://stacks.stanford.edu/image/iiif/dj406yq6980%252Fdj406yq6980_0001/info.json";
+const IMAGE_URL = "https://stacks.stanford.edu/image/iiif/zb497jz4405%2Fzb497jz4405_0001/info.json";
 
 class App extends Component {
   constructor(props) {
@@ -55,6 +58,7 @@ class App extends Component {
       homeZoom: null,
       rollMetadata: {},
       panBoundary: HALF_BOUNDARY,
+      scoreSVG: null,
       pedalMap: null // Interval tree of "pedal on" tick ranges
     }
 
@@ -82,7 +86,8 @@ class App extends Component {
   componentDidMount() {
 
     /* Load MIDI data as JSON {"songname": "base64midi"} */
-    let mididata = require("./mididata.json");
+    let midiData = require("./mididata.json");
+    let scoreData = require("./scoredata.mei.json");
 
     let AudioContext = window.AudioContext || window.webkitAudioContext || false; 
     let ac = new AudioContext();
@@ -92,7 +97,8 @@ class App extends Component {
     gainNode.connect(ac.destination);
     this.setState({gainNode});
 
-    let currentSong = mididata['magic_fire'];
+    //let currentSong = midiData['magic_fire'];
+    let currentSong = midiData['mozart_rondo_alla_turca']
 
     this.setState({ac, gainNode, currentSong});
 
@@ -101,6 +107,21 @@ class App extends Component {
     // MIDI.js format. 
     Soundfont.instrument(ac, this.state.sampleInst, { soundfont: 'MusyngKite' }).then(this.initPlayer);
     //Soundfont.instrument(ac, "http://localhost/~pmb/demotron/salamander_acoustic_grand-mod-ogg.js" ).then(this.initPlayer);
+    
+    verovio.module.onRuntimeInitialized = function()
+    {
+        /* create the toolkit instance */
+        let vrvToolkit = new verovio.toolkit();
+        /* read the MEI file */
+        //mei = fs.readFileSync("hello.mei");
+        /* load the MEI data as string into the toolkit */
+        vrvToolkit.loadData(scoreData['mozart_rondo_alla_turca']);
+        /* render the fist page as SVG */
+        let svgString = vrvToolkit.renderToSVG(1, {});
+        let scoreSVG = parse(svgString);
+        this.setState({scoreSVG});
+    }.bind(this);
+  
   }
 
   getOSDref(osdRef) {
@@ -239,6 +260,16 @@ class App extends Component {
     MidiSamplePlayer.on('fileLoaded', () => {
       console.log("data loaded");
 
+      function decodeCharRefs(string) {
+        return string
+            .replace(/&#(\d+);/g, function(match, num) {
+                return String.fromCodePoint(num);
+            })
+            .replace(/&#x([A-Za-z0-9]+);/g, function(match, num) {
+                return String.fromCodePoint(parseInt(num, 16));
+            });
+      }
+
       this.state.osdRef.current.openSeadragon.viewport.fitHorizontally(true);
 
       let viewportBounds = this.state.osdRef.current.openSeadragon.viewport.getBounds();
@@ -295,7 +326,7 @@ class App extends Component {
               earliestTempoTick = event.tick;
             }
           } else if (event.name === "Text Event") {
-            let text = event.string;
+            let text = decodeCharRefs(event.string);
             if (!text) return;
             /* @IMAGE_WIDTH and @IMAGE_LENGTH should be the same as from viewport._contentSize
             * Can't think of why they wouldn't be, but maybe check anyway. Would need to scale
@@ -715,13 +746,14 @@ class App extends Component {
             <MultiViewer
               height="800px"
               width="500px"
-              iiifUrls={[imageUrl]}
+              iiifUrls={[IMAGE_URL]}
               showToolbar={false}
               backdoor={this.getOSDref}
             />
           </div>
-          <div>
-            <img style={{"width": "500px"}} src={fz_p1}/>
+          <div className="score">
+            {this.state.scoreSVG}
+            {/* <img style={{"width": "500px"}} src={fz_p1}/> */}
           </div>
         </div>
       </div>

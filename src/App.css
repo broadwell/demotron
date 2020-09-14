@@ -53,3 +53,11 @@
   width: 100%;
   height: 1px;
 }
+
+div.score svg {
+  width: 500px;
+  height: 600px;
+  overflow: visible;
+  overflow-x: visible;
+  overflow-y: visible;
+}
