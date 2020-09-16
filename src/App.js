@@ -58,7 +58,8 @@ class App extends Component {
       homeZoom: null,
       rollMetadata: {},
       panBoundary: HALF_BOUNDARY,
-      scoreSVG: null,
+      scorePages: [],
+      currentScorePage: 1,
       pedalMap: null // Interval tree of "pedal on" tick ranges
     }
 
@@ -116,10 +117,15 @@ class App extends Component {
         //mei = fs.readFileSync("hello.mei");
         /* load the MEI data as string into the toolkit */
         vrvToolkit.loadData(scoreData['mozart_rondo_alla_turca']);
+
+        let totalScorePages = vrvToolkit.getPageCount();
         /* render the fist page as SVG */
-        let svgString = vrvToolkit.renderToSVG(1, {});
-        let scoreSVG = parse(svgString);
-        this.setState({scoreSVG});
+        //let svgString = vrvToolkit.renderToSVG(1, {});
+        let scorePages = [];
+        for (let i=1; i<=vrvToolkit.getPageCount(); i++) {
+          scorePages.push(parse(vrvToolkit.renderPage(i, {})))
+        } 
+        this.setState({scorePages});
     }.bind(this);
   
   }
@@ -752,7 +758,11 @@ class App extends Component {
             />
           </div>
           <div className="score">
-            {this.state.scoreSVG}
+            <div>
+              <button id="prev_score_page" disabled={this.state.currentScorePage == 1} name="prev_page" onClick={() => {this.setState({currentScorePage: this.state.currentScorePage-1})}}>Prev</button>
+              <button id="next_score_page" disabled={this.state.currentScorePage == this.state.scorePages.length + 1} name="next_page" onClick={() => {this.setState({currentScorePage: this.state.currentScorePage+1})}}>Next</button>
+            </div>
+            {this.state.scorePages[this.state.currentScorePage-1]}
             {/* <img style={{"width": "500px"}} src={fz_p1}/> */}
           </div>
         </div>
