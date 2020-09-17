@@ -163,7 +163,7 @@ class App extends Component {
         if (elementsattime.page > 0) {
           if (elementsattime.page != this.state.currentScorePage) {
             let page = elementsattime.page;
-             this.setState({currentScorePage: page});
+            this.setState({currentScorePage: page});
           }
         }
 
@@ -245,8 +245,8 @@ class App extends Component {
       return;
     }
 
+    this.setState({currentScorePage: 1, scorePlaying: true, activeNotes: [], totalTicks: this.state.scorePlayer.totalTicks });
     this.state.scorePlayer.play();
-    this.setState({scorePlaying: true, activeNotes: [], totalTicks: this.state.scorePlayer.totalTicks });
 
   }
 
@@ -833,7 +833,7 @@ class App extends Component {
             <div>
               Score pages:
               <button id="prev_score_page" disabled={this.state.scorePlaying || this.state.currentScorePage == 1} name="prev_page" onClick={() => {this.setState({currentScorePage: this.state.currentScorePage-1})}}>Prev</button>
-              <button id="next_score_page" disabled={this.state.scorePlaying || this.state.currentScorePage == this.state.scorePages.length + 1} name="next_page" onClick={() => {this.setState({currentScorePage: this.state.currentScorePage+1})}}>Next</button>
+              <button id="next_score_page" disabled={this.state.scorePlaying || this.state.currentScorePage == this.state.scorePages.length} name="next_page" onClick={() => {this.setState({currentScorePage: this.state.currentScorePage+1})}}>Next</button>
             </div>
             {this.state.scorePages[this.state.currentScorePage-1]}
             {/* <img style={{"width": "500px"}} src={fz_p1}/> */}
