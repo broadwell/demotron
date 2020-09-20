@@ -20,7 +20,13 @@ const SOFT_PEDAL_RATIO = .67;
 const DEFAULT_NOTE_VELOCITY = 33.0;
 const HALF_BOUNDARY = 66; // F# above Middle C; divides the keyboard into two "pans"
 //const IMAGE_URL = "https://stacks.stanford.edu/image/iiif/dj406yq6980%252Fdj406yq6980_0001/info.json";
-const IMAGE_URL = "https://stacks.stanford.edu/image/iiif/zb497jz4405%2Fzb497jz4405_0001/info.json";
+//const IMAGE_URL = "https://stacks.stanford.edu/image/iiif/zb497jz4405%2Fzb497jz4405_0001/info.json";
+let midiData = require("./mididata.json");
+let scoreData = require("./scoredata.mei.json");
+
+const recordings_data = { 'zb497jz4405': { 'slug': 'mozart_rondo_alla_turca', 'title': 'Mozart/Reinecke - Türkischer Marsch', 'image_url': 'https://stacks.stanford.edu/image/iiif/zb497jz4405%2Fzb497jz4405_0001/info.json' },
+                          'yj598pj2879': { 'slug': 'liszt_soirees_de_vienne', 'title': 'Liszt/Carreño - Soirées de Vienne, no. 6', 'image_url': 'https://stacks.stanford.edu/image/iiif/yj598pj2879%2Fyj598pj2879_0001/info.json' }
+                        }
 
 class App extends Component {
   constructor(props) {
@@ -64,7 +70,8 @@ class App extends Component {
       scorePlaying: false,
       currentScorePage: 1,
       highlightedNotes: [],
-      timeMultiplier: 0, // length of score MIDI in ms / total MIDI ticks
+      currentSongId: Object.keys(recordings_data)[1],
+      vrvToolkit: null,
       pedalMap: null // Interval tree of "pedal on" tick ranges
     }
 
@@ -88,13 +95,12 @@ class App extends Component {
     this.sustainPedalOn = this.sustainPedalOn.bind(this);
     this.sustainPedalOff = this.sustainPedalOff.bind(this);
     this.playScore = this.playScore.bind(this);
+    this.loadSong = this.loadSong.bind(this);
   }
 
   componentDidMount() {
 
     /* Load MIDI data as JSON {"songname": "base64midi"} */
-    let midiData = require("./mididata.json");
-    let scoreData = require("./scoredata.mei.json");
 
     let AudioContext = window.AudioContext || window.webkitAudioContext || false; 
     let ac = new AudioContext();
@@ -102,12 +108,31 @@ class App extends Component {
     /* Necessary for volume control */
     const gainNode = ac.createGain();
     gainNode.connect(ac.destination);
-    this.setState({gainNode});
 
-    //let currentSong = midiData['magic_fire'];
-    let currentSong = midiData['mozart_rondo_alla_turca'];
+    verovio.module.onRuntimeInitialized = function() {
+      /* create the toolkit instance */
+      let vrvToolkit = new verovio.toolkit();
 
-    this.setState({ac, gainNode, currentSong});
+      this.setState({ac, gainNode, vrvToolkit});
+
+      this.loadSong(null, this.state.currentSongId, ac, vrvToolkit);
+    }.bind(this);
+  }
+
+  loadSong(e, currentSongId, ac, vrvToolkit) {
+
+    if (e) {
+      currentSongId = e.target.value;
+      ac = this.state.ac;
+      vrvToolkit = this.state.vrvToolkit;
+    }
+
+    console.log("loading song ID", currentSongId);
+
+    let songSlug = recordings_data[currentSongId]['slug'];
+    let currentSong = midiData[songSlug];
+
+    this.setState({currentSongId, currentSong, sustainPedalOn: false, sustainPedalLocked: false, softOn: false, softPedalLocked: false, sustainedNotes: [], activeNotes: [], activeAudioNodes: {} });
 
     // Instantiate the sample-based player
     // Custom soundfouts can be loaded via a URL. They should be in
@@ -115,12 +140,8 @@ class App extends Component {
     Soundfont.instrument(ac, this.state.sampleInst, { soundfont: 'MusyngKite' }).then(this.initPlayer);
     //Soundfont.instrument(ac, "http://localhost/~pmb/demotron/salamander_acoustic_grand-mod-ogg.js" ).then(this.initPlayer);
     
-    verovio.module.onRuntimeInitialized = function() {
-      /* create the toolkit instance */
-      let vrvToolkit = new verovio.toolkit();
-
       /* load the MEI data as string into the toolkit */
-      vrvToolkit.loadData(scoreData['mozart_rondo_alla_turca']);
+      vrvToolkit.loadData(scoreData[songSlug]);
 
       /* render the fist page as SVG */
       let scorePages = [];
@@ -131,13 +152,22 @@ class App extends Component {
 
       /* Instantiate the score MIDI player */
       let MidiSamplePlayer = new MidiPlayer.Player();
+
+      let earliestTempoTick = null;
+      let baseTempo = null;
+
       MidiSamplePlayer.on('fileLoaded', () => {
 
-        // This may need to be computed slightly differently in order for the
-        // note highlighting to be better aligned with the playback.
-        const timeMultiplier = parseFloat(MidiSamplePlayer.getSongTime() * 1000) / parseFloat(MidiSamplePlayer.totalTicks);
+        MidiSamplePlayer.events[0].forEach((event) => {
+          if (event.name === "Set Tempo") {
+            if ((earliestTempoTick === null) || (event.tick < earliestTempoTick)) {
+              baseTempo = event.data;
+              earliestTempoTick = event.tick;
+            }
+          }
+        });
 
-        this.setState({ scorePlayer: MidiSamplePlayer, timeMultiplier });
+        this.setState({ scorePlayer: MidiSamplePlayer, highlightedNotes: [] });
 
       });
 
@@ -149,11 +179,14 @@ class App extends Component {
 
       MidiSamplePlayer.on('midiEvent', function(e) {
 
-        let vrvTime = Math.max(0, parseInt(e.tick * this.state.timeMultiplier)+1);
+        const timeMultiplier = parseFloat(MidiSamplePlayer.getSongTime() * 1000.0) / parseFloat(MidiSamplePlayer.totalTicks);
+
+        let vrvTime = parseInt(e.tick*timeMultiplier) + 1;
+
         let elementsattime = vrvToolkit.getElementsAtTime(vrvTime);
 
         let lastNoteIds = this.state.highlightedNotes;
-        if (lastNoteIds.length > 0) {
+        if (lastNoteIds && lastNoteIds.length > 0) {
           lastNoteIds.forEach((noteId) => {
             let noteElt = document.getElementById(noteId);
             noteElt.setAttribute("style", "fill: #000");
@@ -168,13 +201,14 @@ class App extends Component {
         }
 
         let noteIds = elementsattime.notes;
-        if (noteIds.length > 0) {
+        if (noteIds && noteIds.length > 0) {
           noteIds.forEach((noteId) => {
             let noteElt = document.getElementById(noteId);
             noteElt.setAttribute("style", "fill: #c00");
           });
         }
         this.setState({ highlightedNotes: noteIds });
+
         this.midiEvent(e);
       }.bind(this));
 
@@ -184,11 +218,12 @@ class App extends Component {
         // Do something when end of the file has been reached.
       }.bind(this));
 
-      /* Load MIDI data */
-      MidiSamplePlayer.loadDataUri(scoreMIDI);
+    /* Load MIDI data */
+    MidiSamplePlayer.loadDataUri(scoreMIDI);
 
-      this.setState({scorePages, scoreMIDI});
-    }.bind(this);
+    this.setState({scorePages, scoreMIDI, currentScorePage: 1 });
+
+    this.state.osdRef.current.openSeadragon.viewport.zoomTo(this.state.homeZoom);
   
   }
 
@@ -222,7 +257,7 @@ class App extends Component {
 
       this.state.samplePlayer.stop();
       clearInterval(this.state.scrollTimer);
-      this.setState({ playState: "stopped", scrollTimer: null, activeAudioNodes: {}, activeNotes: [], sustainedNotes: [] });
+      this.setState({ playState: "stopped", scrollTimer: null, activeAudioNodes: {}, activeNotes: [], sustainedNotes: [], sustainPedalOn: false, softPedalOn: false });
       this.panViewportToTick(0);
     }
   }
@@ -595,10 +630,13 @@ class App extends Component {
         //this.setState({ panBoundary: event.value });
       }
     } else if (event.name === "Set Tempo") {
+
       const tempoRatio = 1 + (parseFloat(event.data) - parseFloat(this.state.baseTempo)) / parseFloat(this.state.baseTempo);
       const playbackTempo = parseFloat(this.state.sliderTempo) * tempoRatio;
-      
+
       this.state.samplePlayer.setTempo(playbackTempo);
+      this.state.scorePlayer.setTempo(playbackTempo);
+
       this.setState({tempoRatio, playbackTempo});
     }
 
@@ -772,17 +810,36 @@ class App extends Component {
 
   render() {
 
+    let songOptions = [];
+    Object.keys(recordings_data).forEach((songId, idx) => {
+      songOptions.push(<option key={recordings_data[songId]['slug']} value={songId}>{recordings_data[songId]['title']}</option>)
+    });
+
     return (
       <div className="App">
         <div className="flex-container" style={{display: "flex", flexDirection: "row", justifyContent: "space-around", width: "1000px" }}>
           <div>
             <div style={{textAlign: "left"}}>
+              <div>
+                <label htmlFor="songSelector">
+                  Recording:{" "}
+                </label>
+                <select
+                  value={this.state.currentSongId}
+                  type="string"
+                  name="songSelector"
+                  id="songSelector"
+                  onChange={this.loadSong}
+                >
+                  {songOptions}
+                </select>
+              </div>
               <strong>Title:</strong> {this.state.rollMetadata['TITLE']}<br />
               <strong>Performer:</strong> {this.state.rollMetadata['PERFORMER']}<br />
               <strong>Composer:</strong> {this.state.rollMetadata['COMPOSER']}<br />
               <strong>Label:</strong> {this.state.rollMetadata['LABEL']}<br />
               <strong>PURL:</strong> <a href={this.state.rollMetadata['PURL']}>{this.state.rollMetadata['PURL']}</a><br />
-              <strong>Call No:</strong> {this.state.rollMetadata['CALLNUM']}<br />
+              {/* <strong>Call No:</strong> {this.state.rollMetadata['CALLNUM']}<br /> */}
             </div>
             <hr />
             <div>Progress: <input disabled={this.state.scorePlaying} type="range" min="0" max="1" step=".01" value={this.state.currentProgress} className="slider" id="progress" onChange={this.skipToProgress} /> {(this.state.currentProgress * 100.).toFixed(2)+"%"} </div>
@@ -819,7 +876,7 @@ class App extends Component {
             <MultiViewer
               height="700px"
               width="500px"
-              iiifUrls={[IMAGE_URL]}
+              iiifUrls={[recordings_data[this.state.currentSongId]['image_url']]}
               showToolbar={false}
               backdoor={this.getOSDref}
             />
@@ -864,7 +921,7 @@ class App extends Component {
         <div className="flex-container" style={{display: "flex", flexDirection: "row", justifyContent: "space-evenly", width: "1000px" }}>
           <button id="pause" disabled={this.state.scorePlaying} onClick={this.playPauseSong} style={{background: (this.state.playState === "paused" ? "lightgray" : "white")}}>Play/Pause</button>
           <button id="stop" disabled={this.state.scorePlaying} onClick={this.stopSong} style={{background: "white"}}>Stop</button>
-          <div>Tempo: <input type="range" min="0" max="180" value={this.state.sliderTempo} className="slider" id="tempoSlider" onChange={this.updateTempoSlider} /> {this.state.sliderTempo} bpm</div>
+          <div>Tempo: <input disabled={this.state.scorePlaying} type="range" min="0" max="180" value={this.state.sliderTempo} className="slider" id="tempoSlider" onChange={this.updateTempoSlider} /> {this.state.sliderTempo} bpm</div>
           <div>Master Volume: <input type="range" min="0" max="4" step=".1" value={this.state.volumeRatio} className="slider" id="masterVolumeSlider" name="volume" onChange={this.updateVolumeSlider} /> {this.state.volumeRatio}</div>
           <div>Bass Volume: <input type="range" min="0" max="4" step=".1" value={this.state.leftVolumeRatio} className="slider" id="leftVolumeSlider" name="left" onChange={this.updateVolumeSlider} /> {this.state.leftVolumeRatio}</div>
           <div>Treble Volume: <input type="range" min="0" max="4" step=".1" value={this.state.rightVolumeRatio} className="slider" id="rightVolumeSlider" name="right" onChange={this.updateVolumeSlider} /> {this.state.rightVolumeRatio}</div>
