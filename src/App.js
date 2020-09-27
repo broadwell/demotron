@@ -103,6 +103,8 @@ class App extends Component {
 
     /* Load MIDI data as JSON {"songname": "base64midi"} */
 
+    console.log("Mounting component");
+
     let AudioContext = window.AudioContext || window.webkitAudioContext || false; 
     let ac = new AudioContext();
     
@@ -224,7 +226,7 @@ class App extends Component {
 
     this.setState({scorePages, scoreMIDI, currentScorePage: 1 });
 
-    this.state.osdRef.current.openSeadragon.viewport.zoomTo(this.state.homeZoom);
+    //this.state.osdRef.current.openSeadragon.viewport.zoomTo(this.state.homeZoom);
   
   }
 
@@ -246,9 +248,9 @@ class App extends Component {
       clearInterval(this.state.scrollTimer);
       this.setState({ playState: "paused", scrollTimer: null });
     } else {
-      this.state.osdRef.current.openSeadragon.viewport.zoomTo(this.state.homeZoom);
-      let scrollTimer = setInterval(this.panViewportToTick, UPDATE_INTERVAL_MS);
-      this.setState({ scrollTimer, playState: "playing", totalTicks: this.state.samplePlayer.totalTicks });
+      //this.state.osdRef.current.openSeadragon.viewport.zoomTo(this.state.homeZoom);
+      //let scrollTimer = setInterval(this.panViewportToTick, UPDATE_INTERVAL_MS);
+      this.setState({ /*scrollTimer,*/ playState: "playing", totalTicks: this.state.samplePlayer.totalTicks });
       this.state.samplePlayer.play();
     }
   }
@@ -259,7 +261,7 @@ class App extends Component {
       this.state.samplePlayer.stop();
       clearInterval(this.state.scrollTimer);
       this.setState({ playState: "stopped", scrollTimer: null, activeAudioNodes: {}, activeNotes: [], sustainedNotes: [], sustainPedalOn: false, softPedalOn: false });
-      this.panViewportToTick(0);
+      //this.panViewportToTick(0);
     }
   }
 
@@ -341,7 +343,7 @@ class App extends Component {
       this.state.samplePlayer.play();
     } else {
       this.state.samplePlayer.skipToTick(playTick);
-      this.panViewportToTick(targetTick);
+      //this.panViewportToTick(targetTick);
     }
     this.setState({ sustainPedalOn, softPedalOn });
   }
@@ -413,9 +415,9 @@ class App extends Component {
             });
       }
 
-      this.state.osdRef.current.openSeadragon.viewport.fitHorizontally(true);
+      //this.state.osdRef.current.openSeadragon.viewport.fitHorizontally(true);
 
-      let viewportBounds = this.state.osdRef.current.openSeadragon.viewport.getBounds();
+      //let viewportBounds = this.state.osdRef.current.openSeadragon.viewport.getBounds();
   
       // This will do a "dry run" of the playback and set all event timings.
       // Should already done by this point... (?)
@@ -490,12 +492,12 @@ class App extends Component {
       lastHolePx = parseInt(rollMetadata['LAST_HOLE']);
       holeWidthPx = parseInt(rollMetadata['AVG_HOLE_WIDTH']);
 
-      let firstLineViewport = this.state.osdRef.current.openSeadragon.viewport.imageToViewportCoordinates(0,firstHolePx);
+      //let firstLineViewport = this.state.osdRef.current.openSeadragon.viewport.imageToViewportCoordinates(0,firstHolePx);
 
-      let bounds = new OpenSeadragon.Rect(0.0,firstLineViewport.y - (viewportBounds.height / 2.0),viewportBounds.width, viewportBounds.height);
-      this.state.osdRef.current.openSeadragon.viewport.fitBounds(bounds, true);
+      //let bounds = new OpenSeadragon.Rect(0.0,firstLineViewport.y - (viewportBounds.height / 2.0),viewportBounds.width, viewportBounds.height);
+      //this.state.osdRef.current.openSeadragon.viewport.fitBounds(bounds, true);
 
-      let homeZoom = this.state.osdRef.current.openSeadragon.viewport.getZoom();
+      //let homeZoom = this.state.osdRef.current.openSeadragon.viewport.getZoom();
 
       /*
       // Play line can be drawn via CSS (though not as accurately), but very
@@ -513,7 +515,7 @@ class App extends Component {
         playLine.update(playPoint, OpenSeadragon.Placement.TOP_LEFT);
       }
       */
-      this.setState({ samplePlayer: MidiSamplePlayer, instrument: inst, totalTicks: MidiSamplePlayer.totalTicks, firstHolePx, baseTempo, homeZoom, rollMetadata, pedalMap });
+      this.setState({ samplePlayer: MidiSamplePlayer, instrument: inst, totalTicks: MidiSamplePlayer.totalTicks, firstHolePx, baseTempo, /* homeZoom,*/ rollMetadata, pedalMap });
 
     });
     
@@ -555,7 +557,7 @@ class App extends Component {
             activeAudioNodes[noteNumber].stop();
           } catch {
             console.log("COULDN'T STOP NOTE, PROBABLY DUE TO WEIRD ADSR VALUES, RESETTING");
-            this.setState({ adsr: ADSR_SAMPLE_DEFAULTS });
+            //this.setState({ adsr: ADSR_SAMPLE_DEFAULTS });
           }
           activeAudioNodes[noteNumber] = null;
         }
@@ -811,10 +813,14 @@ class App extends Component {
 
   render() {
 
+    console.log("Rendering component");
+
     let songOptions = [];
     Object.keys(recordings_data).forEach((songId, idx) => {
       songOptions.push(<option key={recordings_data[songId]['slug']} value={songId}>{recordings_data[songId]['title']}</option>)
     });
+
+    console.log("Returning render");
 
     return (
       <div className="App">
@@ -872,7 +878,7 @@ class App extends Component {
             <hr />
           </div>
         </div>  
-        <div className="flex-container" style={{display: "flex", flexDirection: "row", justifyContent: "space-between", width: "1000px" }}>
+        {/* <div className="flex-container" style={{display: "flex", flexDirection: "row", justifyContent: "space-between", width: "1000px" }}>
           <div>
             <MultiViewer
               height="700px"
@@ -894,10 +900,9 @@ class App extends Component {
               <button id="next_score_page" disabled={this.state.scorePlaying || this.state.currentScorePage == this.state.scorePages.length} name="next_page" onClick={() => {this.setState({currentScorePage: this.state.currentScorePage+1})}}>Next</button>
             </div>
             {this.state.scorePages[this.state.currentScorePage-1]}
-            {/* <img style={{"width": "500px"}} src={fz_p1}/> */}
           </div>
-        </div>
-        <Piano
+        </div> */}
+        {/* <Piano
           noteRange={{ first: 21, last: 108 }}
           playNote={(noteNumber) => {
             //this.midiNotePlayer(noteNumber, true);
@@ -914,7 +919,7 @@ class App extends Component {
           }}
           // keyboardShortcuts={keyboardShortcuts}
           activeNotes={this.state.activeNotes}
-        />
+        /> */}
         <div style={{width: "1000px"}}>
           <button id="soft_pedal" name="soft" onClick={this.togglePedalLock} style={{background: (this.state.softPedalOn ? "lightblue" : "white")}}>SOFT</button>
           <button id="sustain_pedal" name="sustain" onClick={this.togglePedalLock} style={{background: (this.state.sustainPedalOn ? "lightblue" : "white")}}>SUST</button>
