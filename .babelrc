@@ -1,0 +1,14 @@
+{
+  "presets": ["@babel/preset-env", "@babel/preset-react",
+    "@babel/env",
+    ["@babel/typescript", { jsxPragma: "h" }]
+  ],
+  "plugins": [
+    ["@babel/plugin-transform-runtime",
+      {
+        "regenerator": true
+      }
+    ],
+    ["@babel/transform-react-jsx", { "pragma": "h" }]
+  ]
+}

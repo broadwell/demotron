@@ -1,15 +1,21 @@
-import React from 'react';
-import ReactDOM from 'react-dom';
+import { h, render } from 'preact';
 import './index.css';
-import App from './App';
-import * as serviceWorker from './serviceWorker';
 
-ReactDOM.render(
-    <App />,
-  document.getElementById('app')
-);
+let root;
+function init() {
+	let App = require('./App').default;
+	root = render(<App />, document.body, root);
+}
 
-// If you want your app to work offline and load faster, you can change
-// unregister() to register() below. Note this comes with some pitfalls.
-// Learn more about service workers: https://bit.ly/CRA-PWA
-serviceWorker.unregister();
+// register ServiceWorker via OfflinePlugin, for prod only:
+if (process.env.NODE_ENV==='production') {
+	require('./pwa');
+}
+
+// in development, set up HMR:
+if (module.hot) {
+	//require('preact/devtools');   // turn this on if you want to enable React DevTools!
+	module.hot.accept('./App', () => requestAnimationFrame(init) );
+}
+
+init();
