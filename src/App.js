@@ -1,4 +1,5 @@
-import React, { Component } from 'react';
+//import React, { Component } from 'react';
+import { h, Component } from 'preact';
 import './App.css';
 
 import MidiPlayer from "midi-player-js";
