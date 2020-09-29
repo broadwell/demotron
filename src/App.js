@@ -5,12 +5,12 @@ import './App.css';
 import MidiPlayer from "midi-player-js";
 import Soundfont from "soundfont-player";
 import OpenSeadragon from 'openseadragon';
-import { Piano, KeyboardShortcuts } from 'react-piano';
-import 'react-piano/dist/styles.css';
+//import { Piano, KeyboardShortcuts } from 'react-piano';
+//import 'react-piano/dist/styles.css';
 // import fz_p1 from './images/feuerzauber_p1.gif';
 import IntervalTree from 'node-interval-tree';
 import verovio from 'verovio';
-import parse from 'html-react-parser';
+//import parse from 'html-react-parser';
 import { v4 as uuidv4 } from 'uuid';
 
 const ADSR_SAMPLE_DEFAULTS = { attack: 0.01, decay: 0.1, sustain: 0.9, release: 0.3 };
@@ -121,6 +121,8 @@ class App extends Component {
     gainNode.connect(ac.destination);
 
     verovio.module.onRuntimeInitialized = function() {
+
+      console.log("creating Verovio instance");
       /* create the toolkit instance */
       let vrvToolkit = new verovio.toolkit();
 
@@ -159,7 +161,6 @@ class App extends Component {
     let songSlug = recordings_data[currentSongId]['slug'];
     let currentSong = midiData[songSlug];
 
-    console.log(this.state.openSeadragon);
     this.state.openSeadragon.open(recordings_data[currentSongId]['image_url']);
 
     this.setState({currentSongId, currentSong, sustainPedalOn: false, sustainPedalLocked: false, softOn: false, softPedalLocked: false, sustainedNotes: [], activeNotes: [], activeAudioNodes: {} });
@@ -176,7 +177,7 @@ class App extends Component {
       /* render the fist page as SVG */
       let scorePages = [];
       for (let i=1; i<=vrvToolkit.getPageCount(); i++) {
-        scorePages.push(parse(vrvToolkit.renderToSVG(i, {})));
+        scorePages.push(vrvToolkit.renderToSVG(i, {}));
       }
       let scoreMIDI = "data:audio/midi;base64," + vrvToolkit.renderToMIDI();
 
@@ -234,7 +235,9 @@ class App extends Component {
         if (noteIds && noteIds.length > 0) {
           noteIds.forEach((noteId) => {
             let noteElt = document.getElementById(noteId);
-            noteElt.setAttribute("style", "fill: #c00");
+            if (noteElt) {
+              noteElt.setAttribute("style", "fill: #c00");
+            }
           });
         }
         this.setState({ highlightedNotes: noteIds });
@@ -251,7 +254,13 @@ class App extends Component {
     /* Load MIDI data */
     MidiSamplePlayer.loadDataUri(scoreMIDI);
 
-    this.setState({scorePages, scoreMIDI, currentScorePage: 1 });
+    // XXX Need to be sure Verovio isn't injecting malicious code into their
+    // digital score renderings...
+    let scorePage = <div dangerouslySetInnerHTML={{
+      __html: scorePages[1]
+    }} />
+
+    this.setState({scorePages, scorePage, scoreMIDI, currentScorePage: 1 });
 
     this.state.openSeadragon.viewport.zoomTo(this.state.homeZoom);
   
@@ -829,9 +838,11 @@ class App extends Component {
 
   render() {
 
+    //const converter = PreactHTMLConverter();
+
     return (
-      <div className="App">
-        <div className="flex-container" style={{display: "flex", flexDirection: "row", justifyContent: "space-around", width: "1000px" }}>
+      <div class="App">
+        <div class="flex-container" style={{display: "flex", flexDirection: "row", justifyContent: "space-around", width: "1000px" }}>
           <div>
             <div style={{textAlign: "left"}}>
               <div>
@@ -843,7 +854,7 @@ class App extends Component {
                   type="string"
                   name="songSelector"
                   id="songSelector"
-                  onChange={this.loadSong}
+                  onInput={this.loadSong}
                 >
                   {this.state.songOptions}
                 </select>
@@ -856,7 +867,7 @@ class App extends Component {
               {/* <strong>Call No:</strong> {this.state.rollMetadata['CALLNUM']}<br /> */}
             </div>
             <hr />
-            <div>Progress: <input disabled={this.state.scorePlaying} type="range" min="0" max="1" step=".01" value={this.state.currentProgress} className="slider" id="progress" onChange={this.skipToProgress} /> {(this.state.currentProgress * 100.).toFixed(2)+"%"} </div>
+            <div>Progress: <input disabled={this.state.scorePlaying} type="range" min="0" max="1" step=".01" value={this.state.currentProgress} class="slider" id="progress" onInput={this.skipToProgress} /> {(this.state.currentProgress * 100.).toFixed(2)+"%"} </div>
           </div>
           <div>
             <div>
@@ -868,7 +879,7 @@ class App extends Component {
                 type="string"
                 name="sampleInstrument"
                 id="sampleInstrument"
-                onChange={this.changeInstrument}
+                onInput={this.changeInstrument}
               >
                 <option value="acoustic_grand_piano">Acoustic Grand</option>
                 <option value="bright_acoustic_piano">Bright Acoustic</option>
@@ -877,19 +888,19 @@ class App extends Component {
               </select>
             </div>
             <div style={{textAlign: "left"}}>ADSR envelope (experimental):
-              <div>Attack: <input disabled type="range" min="0" max=".02" step=".01" value={this.state.adsr['attack']} className="slider" id="attack" onChange={this.updateADSR}/> {this.state.adsr['attack']}</div>
-              <div>Decay: <input disabled type="range" min="0" max=".1" step=".01" value={this.state.adsr['decay']} className="slider" id="decay" onChange={this.updateADSR}/> {this.state.adsr['decay']}</div>
-              <div>Sustain: <input type="range" min="0" max="5" step=".1" value={this.state.adsr['sustain']} className="slider" id="sustain" onChange={this.updateADSR}/> {this.state.adsr['sustain']}</div>
-              <div>Release: <input disabled type="range" min="0" max="1" step=".1" value={this.state.adsr['release']} className="slider" id="release" onChange={this.updateADSR}/> {this.state.adsr['release']}</div>          
+              <div>Attack: <input disabled type="range" min="0" max=".02" step=".01" value={this.state.adsr['attack']} class="slider" id="attack" onInput={this.updateADSR}/> {this.state.adsr['attack']}</div>
+              <div>Decay: <input disabled type="range" min="0" max=".1" step=".01" value={this.state.adsr['decay']} class="slider" id="decay" onInput={this.updateADSR}/> {this.state.adsr['decay']}</div>
+              <div>Sustain: <input type="range" min="0" max="5" step=".1" value={this.state.adsr['sustain']} class="slider" id="sustain" onInput={this.updateADSR}/> {this.state.adsr['sustain']}</div>
+              <div>Release: <input disabled type="range" min="0" max="1" step=".1" value={this.state.adsr['release']} class="slider" id="release" onInput={this.updateADSR}/> {this.state.adsr['release']}</div>          
             </div>
             <hr />
           </div>
         </div>  
-        <div className="flex-container" style={{display: "flex", flexDirection: "row", justifyContent: "space-between", width: "1000px" }}>
+        <div class="flex-container" style={{display: "flex", flexDirection: "row", justifyContent: "space-between", width: "1000px" }}>
           <div style={{height: "700px", width: "500px"}}>
             <div id={this.state.viewerId} style={{width: "100%", height: "100%"}}></div>
           </div>
-          {/*<div className="score">
+          <div class="score">
             <div>
               Score playback:
               <button id="play_score_page" disabled={this.state.scorePlaying || this.state.playState !== "stopped"} name="play_page" onClick={() => {this.playScore(true)}}>Start</button>
@@ -900,8 +911,10 @@ class App extends Component {
               <button id="prev_score_page" disabled={this.state.scorePlaying || this.state.currentScorePage == 1} name="prev_page" onClick={() => {this.setState({currentScorePage: this.state.currentScorePage-1})}}>Prev</button>
               <button id="next_score_page" disabled={this.state.scorePlaying || this.state.currentScorePage == this.state.scorePages.length} name="next_page" onClick={() => {this.setState({currentScorePage: this.state.currentScorePage+1})}}>Next</button>
             </div>
-            {this.state.scorePages[this.state.currentScorePage-1]}
-          </div> */}
+            <div dangerouslySetInnerHTML={{
+              __html: this.state.scorePages[this.state.currentScorePage-1]
+            }} />
+          </div>
         </div>
         {/* <Piano
           noteRange={{ first: 21, last: 108 }}
@@ -925,13 +938,13 @@ class App extends Component {
           <button id="soft_pedal" name="soft" onClick={this.togglePedalLock} style={{background: (this.state.softPedalOn ? "lightblue" : "white")}}>SOFT</button>
           <button id="sustain_pedal" name="sustain" onClick={this.togglePedalLock} style={{background: (this.state.sustainPedalOn ? "lightblue" : "white")}}>SUST</button>
         </div>
-        <div className="flex-container" style={{display: "flex", flexDirection: "row", justifyContent: "space-evenly", width: "1000px" }}>
+        <div class="flex-container" style={{display: "flex", flexDirection: "row", justifyContent: "space-evenly", width: "1000px" }}>
           <button id="pause" disabled={this.state.scorePlaying} onClick={this.playPauseSong} style={{background: (this.state.playState === "paused" ? "lightgray" : "white")}}>Play/Pause</button>
           <button id="stop" disabled={this.state.scorePlaying} onClick={this.stopSong} style={{background: "white"}}>Stop</button>
-          <div>Tempo: <input disabled={this.state.scorePlaying} type="range" min="0" max="180" value={this.state.sliderTempo} className="slider" id="tempoSlider" onChange={this.updateTempoSlider} /> {this.state.sliderTempo} bpm</div>
-          <div>Master Volume: <input type="range" min="0" max="4" step=".1" value={this.state.volumeRatio} className="slider" id="masterVolumeSlider" name="volume" onChange={this.updateVolumeSlider} /> {this.state.volumeRatio}</div>
-          <div>Bass Volume: <input type="range" min="0" max="4" step=".1" value={this.state.leftVolumeRatio} className="slider" id="leftVolumeSlider" name="left" onChange={this.updateVolumeSlider} /> {this.state.leftVolumeRatio}</div>
-          <div>Treble Volume: <input type="range" min="0" max="4" step=".1" value={this.state.rightVolumeRatio} className="slider" id="rightVolumeSlider" name="right" onChange={this.updateVolumeSlider} /> {this.state.rightVolumeRatio}</div>
+          <div>Tempo: <input disabled={this.state.scorePlaying} type="range" min="0" max="180" value={this.state.sliderTempo} class="slider" id="tempoSlider" onInput={this.updateTempoSlider} /> {this.state.sliderTempo} bpm</div>
+          <div>Master Volume: <input type="range" min="0" max="4" step=".1" value={this.state.volumeRatio} class="slider" id="masterVolumeSlider" name="volume" onInput={this.updateVolumeSlider} /> {this.state.volumeRatio}</div>
+          <div>Bass Volume: <input type="range" min="0" max="4" step=".1" value={this.state.leftVolumeRatio} class="slider" id="leftVolumeSlider" name="left" onInput={this.updateVolumeSlider} /> {this.state.leftVolumeRatio}</div>
+          <div>Treble Volume: <input type="range" min="0" max="4" step=".1" value={this.state.rightVolumeRatio} class="slider" id="rightVolumeSlider" name="right" onInput={this.updateVolumeSlider} /> {this.state.rightVolumeRatio}</div>
         </div>
       </div>
     );
