@@ -4,7 +4,6 @@ import './App.css';
 
 import MidiPlayer from "midi-player-js";
 import Soundfont from "soundfont-player";
-import MultiViewer from "./react-iiif-viewer/src/components/MultiViewer";
 import OpenSeadragon from 'openseadragon';
 import { Piano, KeyboardShortcuts } from 'react-piano';
 import 'react-piano/dist/styles.css';
@@ -12,6 +11,7 @@ import 'react-piano/dist/styles.css';
 import IntervalTree from 'node-interval-tree';
 import verovio from 'verovio';
 import parse from 'html-react-parser';
+import { v4 as uuidv4 } from 'uuid';
 
 const ADSR_SAMPLE_DEFAULTS = { attack: 0.01, decay: 0.1, sustain: 0.9, release: 0.3 };
 const UPDATE_INTERVAL_MS = 100;
@@ -55,7 +55,7 @@ class App extends Component {
       ac: null, // The master audio context
       currentTick: 0,
       currentProgress: 0.0,
-      osdRef: null, // Backdoor pointer to the OpenSeadragon component
+      openSeadragon: null, // OpenSeadragon component
       firstHolePx: 0, // This + ticks = current pixel position
       scrollTimer: null, // Fires every 1/x seconds to advance the scroll
       sustainPedalOn: false,
@@ -73,6 +73,8 @@ class App extends Component {
       highlightedNotes: [],
       currentSongId: Object.keys(recordings_data)[1],
       vrvToolkit: null,
+      viewerId: uuidv4(),
+      songOptions: [],
       pedalMap: null // Interval tree of "pedal on" tick ranges
     }
 
@@ -88,7 +90,6 @@ class App extends Component {
     this.skipToPixel = this.skipToPixel.bind(this);
     this.skipToTick = this.skipToTick.bind(this);
     this.skipTo = this.skipTo.bind(this);
-    this.getOSDref = this.getOSDref.bind(this);
     this.panViewportToTick = this.panViewportToTick.bind(this);
     this.midiNotePlayer = this.midiNotePlayer.bind(this);
     this.getNoteName = this.getNoteName.bind(this);
@@ -105,6 +106,13 @@ class App extends Component {
 
     console.log("Mounting component");
 
+    let songOptions = [];
+    Object.keys(recordings_data).forEach((songId, idx) => {
+      songOptions.push(<option key={recordings_data[songId]['slug']} value={songId}>{recordings_data[songId]['title']}</option>)
+    });
+
+    this.setState({songOptions});
+
     let AudioContext = window.AudioContext || window.webkitAudioContext || false; 
     let ac = new AudioContext();
     
@@ -120,6 +128,22 @@ class App extends Component {
 
       this.loadSong(null, this.state.currentSongId, ac, vrvToolkit);
     }.bind(this);
+
+    let openSeadragon = new OpenSeadragon({
+      id: this.state.viewerId,
+      showNavigationControl: false,
+      visibilityRatio: 1
+    });
+
+    this.setState({openSeadragon});
+
+    // On drag, advance (or rewind) the player to the center of the visible roll
+    openSeadragon.addHandler("canvas-drag", () => {
+      let center = openSeadragon.viewport.getCenter();
+      let centerCoords = openSeadragon.viewport.viewportToImageCoordinates(center);
+      this.skipToPixel(centerCoords.y);
+    });
+
   }
 
   loadSong(e, currentSongId, ac, vrvToolkit) {
@@ -134,6 +158,9 @@ class App extends Component {
 
     let songSlug = recordings_data[currentSongId]['slug'];
     let currentSong = midiData[songSlug];
+
+    console.log(this.state.openSeadragon);
+    this.state.openSeadragon.open(recordings_data[currentSongId]['image_url']);
 
     this.setState({currentSongId, currentSong, sustainPedalOn: false, sustainPedalLocked: false, softOn: false, softPedalLocked: false, sustainedNotes: [], activeNotes: [], activeAudioNodes: {} });
 
@@ -226,19 +253,8 @@ class App extends Component {
 
     this.setState({scorePages, scoreMIDI, currentScorePage: 1 });
 
-    //this.state.osdRef.current.openSeadragon.viewport.zoomTo(this.state.homeZoom);
+    this.state.openSeadragon.viewport.zoomTo(this.state.homeZoom);
   
-  }
-
-  getOSDref(osdRef) {
-
-    this.setState({osdRef});
-    // On drag, advance (or rewind) the player to the center of the visible roll
-    osdRef.current.openSeadragon.viewport.viewer.addHandler("canvas-drag", () => {
-      let center = osdRef.current.openSeadragon.viewport.getCenter();
-      let centerCoords = osdRef.current.openSeadragon.viewport.viewportToImageCoordinates(center);
-      this.skipToPixel(centerCoords.y);
-    });
   }
 
   playPauseSong() {
@@ -248,8 +264,8 @@ class App extends Component {
       clearInterval(this.state.scrollTimer);
       this.setState({ playState: "paused", scrollTimer: null });
     } else {
-      //this.state.osdRef.current.openSeadragon.viewport.zoomTo(this.state.homeZoom);
-      //let scrollTimer = setInterval(this.panViewportToTick, UPDATE_INTERVAL_MS);
+      this.state.openSeadragon.viewport.zoomTo(this.state.homeZoom);
+      let scrollTimer = setInterval(this.panViewportToTick, UPDATE_INTERVAL_MS);
       this.setState({ /*scrollTimer,*/ playState: "playing", totalTicks: this.state.samplePlayer.totalTicks });
       this.state.samplePlayer.play();
     }
@@ -261,7 +277,7 @@ class App extends Component {
       this.state.samplePlayer.stop();
       clearInterval(this.state.scrollTimer);
       this.setState({ playState: "stopped", scrollTimer: null, activeAudioNodes: {}, activeNotes: [], sustainedNotes: [], sustainPedalOn: false, softPedalOn: false });
-      //this.panViewportToTick(0);
+      this.panViewportToTick(0);
     }
   }
 
@@ -343,7 +359,7 @@ class App extends Component {
       this.state.samplePlayer.play();
     } else {
       this.state.samplePlayer.skipToTick(playTick);
-      //this.panViewportToTick(targetTick);
+      this.panViewportToTick(targetTick);
     }
     this.setState({ sustainPedalOn, softPedalOn });
   }
@@ -415,9 +431,9 @@ class App extends Component {
             });
       }
 
-      //this.state.osdRef.current.openSeadragon.viewport.fitHorizontally(true);
+      this.state.openSeadragon.viewport.fitHorizontally(true);
 
-      //let viewportBounds = this.state.osdRef.current.openSeadragon.viewport.getBounds();
+      let viewportBounds = this.state.openSeadragon.viewport.getBounds();
   
       // This will do a "dry run" of the playback and set all event timings.
       // Should already done by this point... (?)
@@ -492,30 +508,30 @@ class App extends Component {
       lastHolePx = parseInt(rollMetadata['LAST_HOLE']);
       holeWidthPx = parseInt(rollMetadata['AVG_HOLE_WIDTH']);
 
-      //let firstLineViewport = this.state.osdRef.current.openSeadragon.viewport.imageToViewportCoordinates(0,firstHolePx);
+      let firstLineViewport = this.state.openSeadragon.viewport.imageToViewportCoordinates(0,firstHolePx);
 
-      //let bounds = new OpenSeadragon.Rect(0.0,firstLineViewport.y - (viewportBounds.height / 2.0),viewportBounds.width, viewportBounds.height);
-      //this.state.osdRef.current.openSeadragon.viewport.fitBounds(bounds, true);
+      let bounds = new OpenSeadragon.Rect(0.0,firstLineViewport.y - (viewportBounds.height / 2.0),viewportBounds.width, viewportBounds.height);
+      this.state.openSeadragon.viewport.fitBounds(bounds, true);
 
-      //let homeZoom = this.state.osdRef.current.openSeadragon.viewport.getZoom();
+      let homeZoom = this.state.openSeadragon.viewport.getZoom();
 
       /*
       // Play line can be drawn via CSS (though not as accurately), but very
       // similar code to this would be used to show other overlays, e.g., to
       // "fill" in actively playing notes and other mechanics. Performance is
       // an issue, though.
-      let startBounds = this.state.osdRef.current.openSeadragon.viewport.getBounds();
+      let startBounds = this.state.openSeadragon.viewport.getBounds();
       let playPoint = new OpenSeadragon.Point(0, startBounds.y + (startBounds.height / 2.0));
-      let playLine = this.state.osdRef.current.openSeadragon.viewport.viewer.getOverlayById('play-line');
+      let playLine = this.state.openSeadragon.viewport.viewer.getOverlayById('play-line');
       if (!playLine) {
         playLine = document.createElement("div");
         playLine.id = "play-line";
-        this.state.osdRef.current.openSeadragon.viewport.viewer.addOverlay(playLine, playPoint, OpenSeadragon.Placement.TOP_LEFT);
+        this.state.openSeadragon.viewport.viewer.addOverlay(playLine, playPoint, OpenSeadragon.Placement.TOP_LEFT);
       } else {
         playLine.update(playPoint, OpenSeadragon.Placement.TOP_LEFT);
       }
       */
-      this.setState({ samplePlayer: MidiSamplePlayer, instrument: inst, totalTicks: MidiSamplePlayer.totalTicks, firstHolePx, baseTempo, /* homeZoom,*/ rollMetadata, pedalMap });
+      this.setState({ samplePlayer: MidiSamplePlayer, instrument: inst, totalTicks: MidiSamplePlayer.totalTicks, firstHolePx, baseTempo, homeZoom, rollMetadata, pedalMap });
 
     });
     
@@ -692,16 +708,16 @@ class App extends Component {
       tick = this.state.samplePlayer.getCurrentTick();
     }
 
-    let viewportBounds = this.state.osdRef.current.openSeadragon.viewport.getBounds();
+    let viewportBounds = this.state.openSeadragon.viewport.getBounds();
 
     // Thanks to Craig, MIDI tick numbers correspond to pixels from the first
     // hole of the roll.
     let linePx = this.state.firstHolePx + tick;
 
-    let lineViewport = this.state.osdRef.current.openSeadragon.viewport.imageToViewportCoordinates(0,linePx);
+    let lineViewport = this.state.openSeadragon.viewport.imageToViewportCoordinates(0,linePx);
 
     let lineCenter = new OpenSeadragon.Point(viewportBounds.width / 2.0, lineViewport.y);
-    this.state.osdRef.current.openSeadragon.viewport.panTo(lineCenter);
+    this.state.openSeadragon.viewport.panTo(lineCenter);
 
     let targetProgress = parseFloat(tick) / this.state.totalTicks;
     let playProgress = Math.max(0, targetProgress);
@@ -813,15 +829,6 @@ class App extends Component {
 
   render() {
 
-    console.log("Rendering component");
-
-    let songOptions = [];
-    Object.keys(recordings_data).forEach((songId, idx) => {
-      songOptions.push(<option key={recordings_data[songId]['slug']} value={songId}>{recordings_data[songId]['title']}</option>)
-    });
-
-    console.log("Returning render");
-
     return (
       <div className="App">
         <div className="flex-container" style={{display: "flex", flexDirection: "row", justifyContent: "space-around", width: "1000px" }}>
@@ -838,7 +845,7 @@ class App extends Component {
                   id="songSelector"
                   onChange={this.loadSong}
                 >
-                  {songOptions}
+                  {this.state.songOptions}
                 </select>
               </div>
               <strong>Title:</strong> {this.state.rollMetadata['TITLE']}<br />
@@ -878,17 +885,11 @@ class App extends Component {
             <hr />
           </div>
         </div>  
-        {/* <div className="flex-container" style={{display: "flex", flexDirection: "row", justifyContent: "space-between", width: "1000px" }}>
-          <div>
-            <MultiViewer
-              height="700px"
-              width="500px"
-              iiifUrls={[recordings_data[this.state.currentSongId]['image_url']]}
-              showToolbar={false}
-              backdoor={this.getOSDref}
-            />
+        <div className="flex-container" style={{display: "flex", flexDirection: "row", justifyContent: "space-between", width: "1000px" }}>
+          <div style={{height: "700px", width: "500px"}}>
+            <div id={this.state.viewerId} style={{width: "100%", height: "100%"}}></div>
           </div>
-          <div className="score">
+          {/*<div className="score">
             <div>
               Score playback:
               <button id="play_score_page" disabled={this.state.scorePlaying || this.state.playState !== "stopped"} name="play_page" onClick={() => {this.playScore(true)}}>Start</button>
@@ -900,8 +901,8 @@ class App extends Component {
               <button id="next_score_page" disabled={this.state.scorePlaying || this.state.currentScorePage == this.state.scorePages.length} name="next_page" onClick={() => {this.setState({currentScorePage: this.state.currentScorePage+1})}}>Next</button>
             </div>
             {this.state.scorePages[this.state.currentScorePage-1]}
-          </div>
-        </div> */}
+          </div> */}
+        </div>
         {/* <Piano
           noteRange={{ first: 21, last: 108 }}
           playNote={(noteNumber) => {
