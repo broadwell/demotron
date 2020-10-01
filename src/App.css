@@ -61,3 +61,104 @@ div.score svg {
   overflow-x: visible;
   overflow-y: visible;
 }
+
+.piano-keyboard {
+	height: 5rem;
+	width: 10rem;
+	cursor: pointer;
+	position: relative;
+	-webkit-tap-highlight-color: transparent;
+	-webkit-user-select: none;
+	user-select: none;
+
+	display: flex;
+	flex-direction: row;
+	flex-wrap: nowrap;
+	justify-content: flex-start;
+	align-content: stretch;
+	align-items: flex-start;
+}
+
+.piano-keyboard-key {
+	position: relative;
+	height: 100%;
+	width: auto;
+	order: 0;
+	flex: 1 0 auto;
+	align-self: auto;
+}
+.piano-keyboard-key-white {
+	background: rgb(255,255,255);
+	box-shadow: inset 0 0 0px 1px rgba(87, 85, 65, 0.12);
+}
+.piano-keyboard-key-black {
+	height: 67%;
+	background: rgb(12,11,10);
+	box-shadow: none;
+	position: absolute;
+	top: 0;
+	z-index: 1;
+	right: -33%;
+	width: 67%;
+}
+.piano-keyboard-key-black:after {
+	content: '';
+	position: absolute;
+	left: 0;
+	bottom: 0;
+	right: 0;
+	top: 0;
+	border-bottom: 1.4rem solid rgba(220, 230, 231, 0.06);
+	border-left: .35rem solid rgba(255, 249, 245, 0.12);
+	border-right: .35rem solid rgba(230, 236, 241, 0.16);
+	border-top: none;
+}
+.piano-keyboard-key-c-sharp {
+	right: -20%;
+}
+.piano-keyboard-key-d-sharp {
+	right: -47%;
+}
+.piano-keyboard-key-f-sharp {
+	right: -17%;
+}
+.piano-keyboard-key-a-sharp {
+	right: -50%;
+}
+.piano-keyboard-key-active {
+	background: rgb(181, 226, 255);
+	box-shadow: none;
+}
+
+/** Optional vertical style */
+.piano-keyboard-vertical {
+	flex-direction: column-reverse;
+}
+.piano-keyboard-vertical .piano-keyboard-key-white {
+	width: 100%;
+	height: auto;
+}
+.piano-keyboard-vertical .piano-keyboard-key-black {
+	width: 67%;
+	top: -33%;
+	height: 67%;
+	right: auto;
+}
+.piano-keyboard-vertical .piano-keyboard-key-black:after {
+	border-right: 1.4rem solid rgba(233, 231, 220, 0.06);
+	border-bottom: .35rem solid rgba(255, 249, 245, 0.12);
+	border-top: .35rem solid rgba(230, 236, 241, 0.16);
+	border-left: none;
+}
+.piano-keyboard-vertical .piano-keyboard-key-c-sharp {
+	top: -20%;
+}
+.piano-keyboard-vertical .piano-keyboard-key-d-sharp {
+	top: -47%;
+}
+.piano-keyboard-vertical .piano-keyboard-key-f-sharp {
+	top: -17%;
+}
+.piano-keyboard-vertical .piano-keyboard-key-a-sharp {
+	top: -50%;
+}

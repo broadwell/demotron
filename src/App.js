@@ -12,6 +12,7 @@ import IntervalTree from 'node-interval-tree';
 import verovio from 'verovio';
 //import parse from 'html-react-parser';
 import { v4 as uuidv4 } from 'uuid';
+import Keyboard from 'piano-keyboard';
 
 const ADSR_SAMPLE_DEFAULTS = { attack: 0.01, decay: 0.1, sustain: 0.9, release: 0.3 };
 const UPDATE_INTERVAL_MS = 100;
@@ -75,6 +76,7 @@ class App extends Component {
       vrvToolkit: null,
       viewerId: uuidv4(),
       songOptions: [],
+      keyboard: null,
       pedalMap: null // Interval tree of "pedal on" tick ranges
     }
 
@@ -98,6 +100,7 @@ class App extends Component {
     this.sustainPedalOff = this.sustainPedalOff.bind(this);
     this.playScore = this.playScore.bind(this);
     this.loadSong = this.loadSong.bind(this);
+    this.keyboardToggleKey = this.keyboardToggleKey.bind(this);
   }
 
   componentDidMount() {
@@ -146,6 +149,23 @@ class App extends Component {
       this.skipToPixel(centerCoords.y);
     });
 
+    let keyboard_elt = document.querySelector('.keyboard');
+    console.log(keyboard_elt);
+
+    let keyboard = new Keyboard({
+      element: keyboard_elt,
+      range: ['a0', 'c8'],
+      a11y: false
+    });
+
+    keyboard.on('noteOn', function ({which, volume, target}) {
+                 this.midiNotePlayer(which+20, true)}.bind(this))
+             .on('noteOff', function ({which, volume, target}) {
+                 this.midiNotePlayer(which+20, false)}.bind(this));
+
+    //keyboard.update();
+
+    this.setState({keyboard});
   }
 
   loadSong(e, currentSongId, ac, vrvToolkit) {
@@ -162,6 +182,8 @@ class App extends Component {
     let currentSong = midiData[songSlug];
 
     this.state.openSeadragon.open(recordings_data[currentSongId]['image_url']);
+
+    this.state.activeNotes.forEach((noteNumber) => {this.keyboardToggleKey(noteNumber, false)});
 
     this.setState({currentSongId, currentSong, sustainPedalOn: false, sustainPedalLocked: false, softOn: false, softPedalLocked: false, sustainedNotes: [], activeNotes: [], activeAudioNodes: {} });
 
@@ -254,13 +276,7 @@ class App extends Component {
     /* Load MIDI data */
     MidiSamplePlayer.loadDataUri(scoreMIDI);
 
-    // XXX Need to be sure Verovio isn't injecting malicious code into their
-    // digital score renderings...
-    let scorePage = <div dangerouslySetInnerHTML={{
-      __html: scorePages[1]
-    }} />
-
-    this.setState({scorePages, scorePage, scoreMIDI, currentScorePage: 1 });
+    this.setState({scorePages, scoreMIDI, currentScorePage: 1 });
 
     this.state.openSeadragon.viewport.zoomTo(this.state.homeZoom);
   
@@ -275,7 +291,8 @@ class App extends Component {
     } else {
       this.state.openSeadragon.viewport.zoomTo(this.state.homeZoom);
       let scrollTimer = setInterval(this.panViewportToTick, UPDATE_INTERVAL_MS);
-      this.setState({ /*scrollTimer,*/ playState: "playing", totalTicks: this.state.samplePlayer.totalTicks });
+      this.state.activeNotes.forEach((noteNumber) => {this.keyboardToggleKey(noteNumber, false)});
+      this.setState({ scrollTimer, playState: "playing", totalTicks: this.state.samplePlayer.totalTicks });
       this.state.samplePlayer.play();
     }
   }
@@ -285,6 +302,7 @@ class App extends Component {
 
       this.state.samplePlayer.stop();
       clearInterval(this.state.scrollTimer);
+      this.state.activeNotes.forEach((noteNumber) => {this.keyboardToggleKey(noteNumber, false)});
       this.setState({ playState: "stopped", scrollTimer: null, activeAudioNodes: {}, activeNotes: [], sustainedNotes: [], sustainPedalOn: false, softPedalOn: false });
       this.panViewportToTick(0);
     }
@@ -303,10 +321,14 @@ class App extends Component {
         });
       }
 
+      this.state.activeNotes.forEach((noteNumber) => {this.keyboardToggleKey(noteNumber, false)});
+
       this.setState({scorePlaying: false, activeAudioNodes: {}, activeNotes: [], sustainedNotes: [], currentProgress: 0, highlightedNotes: []});
       
       return;
     }
+
+    this.state.activeNotes.forEach((noteNumber) => {this.keyboardToggleKey(noteNumber, false)});
 
     this.setState({currentScorePage: 1, scorePlaying: true, activeNotes: [], totalTicks: this.state.scorePlayer.totalTicks });
     this.state.scorePlayer.play();
@@ -351,6 +373,7 @@ class App extends Component {
     if (this.state.scorePlaying) {
       this.state.scorePlayer.pause();
       this.state.scorePlayer.skipToTick(playTick);
+      this.state.activeNotes.forEach((noteNumber) => {this.keyboardToggleKey(noteNumber, false)});
       this.setState({ activeAudioNodes: {}, activeNotes: [], sustainedNotes: [], currentProgress: playProgress });
       this.state.scorePlayer.play();
       return;
@@ -364,6 +387,7 @@ class App extends Component {
     if (this.state.samplePlayer.isPlaying()) {
       this.state.samplePlayer.pause();
       this.state.samplePlayer.skipToTick(playTick);
+      this.state.activeNotes.forEach((noteNumber) => {this.keyboardToggleKey(noteNumber, false)});
       this.setState({ activeAudioNodes: {}, activeNotes: [], sustainedNotes: [], currentProgress: playProgress });
       this.state.samplePlayer.play();
     } else {
@@ -589,6 +613,9 @@ class App extends Component {
         while(activeNotes.includes(parseInt(noteNumber))) {
           activeNotes.splice(activeNotes.indexOf(parseInt(noteNumber)), 1);
         }
+
+        this.keyboardToggleKey(noteNumber, false);
+
         this.setState({ activeAudioNodes, activeNotes });
       
       // Note on
@@ -631,6 +658,10 @@ class App extends Component {
         if (!activeNotes.includes(noteNumber)) {
           activeNotes.push(parseInt(noteNumber));
         }
+        this.state.keyboard.activeNotes.add(noteNumber);
+
+        this.keyboardToggleKey(noteNumber, true);
+
         this.setState({activeAudioNodes, activeNotes, sustainedNotes});
       }
     } else if (event.name === "Controller Change") {
@@ -792,6 +823,16 @@ class App extends Component {
     }
   }
 
+  keyboardToggleKey(noteNumber, onIfTrue) {
+
+    let keyElt = document.querySelector('div[data-key="' + (parseInt(noteNumber)-20).toString() + '"]');
+    if (onIfTrue) {
+      keyElt.classList.add("piano-keyboard-key-active");
+    } else {
+      keyElt.classList.remove("piano-keyboard-key-active");
+    }
+  }
+
   getNoteName(noteNumber) {
     const octave = parseInt(noteNumber / 12) - 1;
     noteNumber -= 21;
@@ -837,8 +878,6 @@ class App extends Component {
   }
 
   render() {
-
-    //const converter = PreactHTMLConverter();
 
     return (
       <div class="App">
@@ -916,24 +955,7 @@ class App extends Component {
             }} />
           </div>
         </div>
-        {/* <Piano
-          noteRange={{ first: 21, last: 108 }}
-          playNote={(noteNumber) => {
-            //this.midiNotePlayer(noteNumber, true);
-          }}
-          stopNote={(noteNumber) => {
-            //this.midiNotePlayer(noteNumber, false);
-          }}
-          width={1000}
-          onPlayNoteInput={(noteNumber) => {
-            this.midiNotePlayer(noteNumber, true);
-          }}
-          onStopNoteInput={(noteNumber) => {
-            this.midiNotePlayer(noteNumber, false);
-          }}
-          // keyboardShortcuts={keyboardShortcuts}
-          activeNotes={this.state.activeNotes}
-        /> */}
+        <div class="keyboard piano-keyboard-horizontal" style={{width: "100%", height: "100px"}}></div>
         <div style={{width: "1000px"}}>
           <button id="soft_pedal" name="soft" onClick={this.togglePedalLock} style={{background: (this.state.softPedalOn ? "lightblue" : "white")}}>SOFT</button>
           <button id="sustain_pedal" name="sustain" onClick={this.togglePedalLock} style={{background: (this.state.sustainPedalOn ? "lightblue" : "white")}}>SUST</button>
