@@ -1,16 +1,11 @@
-//import React, { Component } from 'react';
 import { h, Component } from 'preact';
 import './App.css';
 
 import MidiPlayer from "midi-player-js";
 import Soundfont from "soundfont-player";
 import OpenSeadragon from 'openseadragon';
-//import { Piano, KeyboardShortcuts } from 'react-piano';
-//import 'react-piano/dist/styles.css';
-// import fz_p1 from './images/feuerzauber_p1.gif';
 import IntervalTree from 'node-interval-tree';
 import verovio from 'verovio';
-//import parse from 'html-react-parser';
 import { v4 as uuidv4 } from 'uuid';
 import Keyboard from 'piano-keyboard';
 
@@ -21,8 +16,6 @@ const FLAT_NOTES = ["A", "Bb", "B", "C", "Db", "D", "Eb", "E", "F", "Gb", "G", "
 const SOFT_PEDAL_RATIO = .67;
 const DEFAULT_NOTE_VELOCITY = 33.0;
 const HALF_BOUNDARY = 66; // F# above Middle C; divides the keyboard into two "pans"
-//const IMAGE_URL = "https://stacks.stanford.edu/image/iiif/dj406yq6980%252Fdj406yq6980_0001/info.json";
-//const IMAGE_URL = "https://stacks.stanford.edu/image/iiif/zb497jz4405%2Fzb497jz4405_0001/info.json";
 let midiData = require("./mididata.json");
 let scoreData = require("./scoredata.mei.json");
 
@@ -41,7 +34,6 @@ class App extends Component {
       scorePlayer: null,
       playState: "stopped",
       instrument: null, // The Soundfont player "instrument"
-      gainNode: null, // For modifying output volume
       adsr: ADSR_SAMPLE_DEFAULTS,
       totalTicks: 0,
       sampleInst: 'acoustic_grand_piano',
@@ -107,8 +99,6 @@ class App extends Component {
 
     /* Load MIDI data as JSON {"songname": "base64midi"} */
 
-    console.log("Mounting component");
-
     let songOptions = [];
     Object.keys(recordings_data).forEach((songId, idx) => {
       songOptions.push(<option key={recordings_data[songId]['slug']} value={songId}>{recordings_data[songId]['title']}</option>)
@@ -119,20 +109,15 @@ class App extends Component {
     let AudioContext = window.AudioContext || window.webkitAudioContext || false; 
     let ac = new AudioContext();
     
-    /* Necessary for volume control */
-    const gainNode = ac.createGain();
-    gainNode.connect(ac.destination);
-
-    verovio.module.onRuntimeInitialized = function() {
-
-      console.log("creating Verovio instance");
-      /* create the toolkit instance */
-      let vrvToolkit = new verovio.toolkit();
-
-      this.setState({ac, gainNode, vrvToolkit});
-
-      this.loadSong(null, this.state.currentSongId, ac, vrvToolkit);
-    }.bind(this);
+    /* Volume control is handled by setting the gain for each note playback
+     * individually at play time according to master, bass/treble and soft
+     * pedal volume modifier values. A global volume node like this arguably
+     * wouldn't fit the analog piano paradigm that we're emulating here. 
+     * It probably could for example be used to change the volume of notes
+     * that are already sounding, but that's not really how pianos work.
+     */
+    //const gainNode = ac.createGain();
+    //gainNode.connect(ac.destination);
 
     let openSeadragon = new OpenSeadragon({
       id: this.state.viewerId,
@@ -150,7 +135,6 @@ class App extends Component {
     });
 
     let keyboard_elt = document.querySelector('.keyboard');
-    console.log(keyboard_elt);
 
     let keyboard = new Keyboard({
       element: keyboard_elt,
@@ -163,9 +147,18 @@ class App extends Component {
              .on('noteOff', function ({which, volume, target}) {
                  this.midiNotePlayer(which+20, false)}.bind(this));
 
-    //keyboard.update();
-
     this.setState({keyboard});
+
+    verovio.module.onRuntimeInitialized = function() {
+
+      console.log("creating Verovio instance");
+      /* create the toolkit instance */
+      let vrvToolkit = new verovio.toolkit();
+
+      this.setState({ac, /*gainNode,*/ vrvToolkit});
+
+      this.loadSong(null, this.state.currentSongId, ac, vrvToolkit);
+    }.bind(this);
   }
 
   loadSong(e, currentSongId, ac, vrvToolkit) {
@@ -193,92 +186,76 @@ class App extends Component {
     Soundfont.instrument(ac, this.state.sampleInst, { soundfont: 'MusyngKite' }).then(this.initPlayer);
     //Soundfont.instrument(ac, "http://localhost/~pmb/demotron/salamander_acoustic_grand-mod-ogg.js" ).then(this.initPlayer);
     
-      /* load the MEI data as string into the toolkit */
-      vrvToolkit.loadData(scoreData[songSlug]);
+    /* load the MEI data as string into the toolkit */
+    vrvToolkit.loadData(scoreData[songSlug]);
 
-      /* render the fist page as SVG */
-      let scorePages = [];
-      for (let i=1; i<=vrvToolkit.getPageCount(); i++) {
-        scorePages.push(vrvToolkit.renderToSVG(i, {}));
+    /* render the fist page as SVG */
+    let scorePages = [];
+    for (let i=1; i<=vrvToolkit.getPageCount(); i++) {
+      scorePages.push(vrvToolkit.renderToSVG(i, {}));
+    }
+    let scoreMIDI = "data:audio/midi;base64," + vrvToolkit.renderToMIDI();
+
+    /* Instantiate the score MIDI player */
+    let MidiSamplePlayer = new MidiPlayer.Player();
+
+    MidiSamplePlayer.on('fileLoaded', () => {
+      this.setState({ scorePlayer: MidiSamplePlayer, highlightedNotes: [] });
+    });
+
+    MidiSamplePlayer.on('playing', currentTick => {
+      //console.log(currentTick, this.state.totalTicks);
+      // Do something while player is playing
+      // (this is repeatedly triggered within the play loop)
+    });
+
+    MidiSamplePlayer.on('midiEvent', function(e) {
+
+      const timeMultiplier = parseFloat(MidiSamplePlayer.getSongTime() * 1000.0) / parseFloat(MidiSamplePlayer.totalTicks);
+
+      let vrvTime = parseInt(e.tick*timeMultiplier) + 1;
+
+      let elementsattime = vrvToolkit.getElementsAtTime(vrvTime);
+
+      let lastNoteIds = this.state.highlightedNotes;
+      if (lastNoteIds && lastNoteIds.length > 0) {
+        lastNoteIds.forEach((noteId) => {
+          let noteElt = document.getElementById(noteId);
+          noteElt.setAttribute("style", "fill: #000");
+        });
       }
-      let scoreMIDI = "data:audio/midi;base64," + vrvToolkit.renderToMIDI();
 
-      /* Instantiate the score MIDI player */
-      let MidiSamplePlayer = new MidiPlayer.Player();
+      if (elementsattime.page > 0) {
+        if (elementsattime.page != this.state.currentScorePage) {
+          let page = elementsattime.page;
+          this.setState({currentScorePage: page});
+        }
+      }
 
-      let earliestTempoTick = null;
-      let baseTempo = null;
-
-      MidiSamplePlayer.on('fileLoaded', () => {
-
-        MidiSamplePlayer.events[0].forEach((event) => {
-          if (event.name === "Set Tempo") {
-            if ((earliestTempoTick === null) || (event.tick < earliestTempoTick)) {
-              baseTempo = event.data;
-              earliestTempoTick = event.tick;
-            }
+      let noteIds = elementsattime.notes;
+      if (noteIds && noteIds.length > 0) {
+        noteIds.forEach((noteId) => {
+          let noteElt = document.getElementById(noteId);
+          if (noteElt) {
+            noteElt.setAttribute("style", "fill: #c00");
           }
         });
+      }
+      this.setState({ highlightedNotes: noteIds });
 
-        this.setState({ scorePlayer: MidiSamplePlayer, highlightedNotes: [] });
+      this.midiEvent(e);
+    }.bind(this));
 
-      });
-
-      MidiSamplePlayer.on('playing', currentTick => {
-        //console.log(currentTick, this.state.totalTicks);
-        // Do something while player is playing
-        // (this is repeatedly triggered within the play loop)
-      });
-
-      MidiSamplePlayer.on('midiEvent', function(e) {
-
-        const timeMultiplier = parseFloat(MidiSamplePlayer.getSongTime() * 1000.0) / parseFloat(MidiSamplePlayer.totalTicks);
-
-        let vrvTime = parseInt(e.tick*timeMultiplier) + 1;
-
-        let elementsattime = vrvToolkit.getElementsAtTime(vrvTime);
-
-        let lastNoteIds = this.state.highlightedNotes;
-        if (lastNoteIds && lastNoteIds.length > 0) {
-          lastNoteIds.forEach((noteId) => {
-            let noteElt = document.getElementById(noteId);
-            noteElt.setAttribute("style", "fill: #000");
-          });
-        }
-
-        if (elementsattime.page > 0) {
-          if (elementsattime.page != this.state.currentScorePage) {
-            let page = elementsattime.page;
-            this.setState({currentScorePage: page});
-          }
-        }
-
-        let noteIds = elementsattime.notes;
-        if (noteIds && noteIds.length > 0) {
-          noteIds.forEach((noteId) => {
-            let noteElt = document.getElementById(noteId);
-            if (noteElt) {
-              noteElt.setAttribute("style", "fill: #c00");
-            }
-          });
-        }
-        this.setState({ highlightedNotes: noteIds });
-
-        this.midiEvent(e);
-      }.bind(this));
-
-      MidiSamplePlayer.on('endOfFile', function() {
-        console.log("END OF FILE");
-        this.playScore(false);
-        // Do something when end of the file has been reached.
-      }.bind(this));
+    MidiSamplePlayer.on('endOfFile', function() {
+      console.log("END OF FILE");
+      this.playScore(false);
+      // Do something when end of the file has been reached.
+    }.bind(this));
 
     /* Load MIDI data */
     MidiSamplePlayer.loadDataUri(scoreMIDI);
 
     this.setState({scorePages, scoreMIDI, currentScorePage: 1 });
-
-    this.state.openSeadragon.viewport.zoomTo(this.state.homeZoom);
   
   }
 
@@ -544,6 +521,7 @@ class App extends Component {
       let firstLineViewport = this.state.openSeadragon.viewport.imageToViewportCoordinates(0,firstHolePx);
 
       let bounds = new OpenSeadragon.Rect(0.0,firstLineViewport.y - (viewportBounds.height / 2.0),viewportBounds.width, viewportBounds.height);
+
       this.state.openSeadragon.viewport.fitBounds(bounds, true);
 
       let homeZoom = this.state.openSeadragon.viewport.getZoom();
@@ -565,6 +543,11 @@ class App extends Component {
       }
       */
       this.setState({ samplePlayer: MidiSamplePlayer, instrument: inst, totalTicks: MidiSamplePlayer.totalTicks, firstHolePx, baseTempo, homeZoom, rollMetadata, pedalMap });
+
+      // XXX Sometimes, on song change, the viewport doesn't automatically jump
+      // to the starting bounds+zoom for the new song. Not sure why.
+      // Maybe try adding a this.skipToTick(0) here?
+      this.state.openSeadragon.viewport.zoomTo(homeZoom);
 
     });
     
@@ -601,32 +584,40 @@ class App extends Component {
 
       // Note off
       if (noteVelocity === 0) {
-        if ((noteNumber in this.state.activeAudioNodes) && (!this.state.sustainedNotes.includes(noteNumber))) {
+        console.log("OFF",noteNumber,this.getNoteName(noteNumber));
+        if (this.state.sustainedNotes.includes(noteNumber)) {
+          console.log("SUSTAIN PEDAL IS ON, KEEPING NOTE PLAYING");
+        }
+
+        if (!this.state.sustainedNotes.includes(noteNumber)) {
           try {
+            console.log(activeAudioNodes[noteNumber]);
             activeAudioNodes[noteNumber].stop();
           } catch {
-            console.log("COULDN'T STOP NOTE, PROBABLY DUE TO WEIRD ADSR VALUES, RESETTING");
+            console.log("COULDN'T STOP",noteNumber,this.getNoteName(noteNumber));
             //this.setState({ adsr: ADSR_SAMPLE_DEFAULTS });
           }
-          activeAudioNodes[noteNumber] = null;
+          delete activeAudioNodes[noteNumber];
         }
         while(activeNotes.includes(parseInt(noteNumber))) {
           activeNotes.splice(activeNotes.indexOf(parseInt(noteNumber)), 1);
         }
 
-        this.keyboardToggleKey(noteNumber, false);
-
         this.setState({ activeAudioNodes, activeNotes });
+
+        this.keyboardToggleKey(noteNumber, false);
       
       // Note on
       } else {
+        console.log("ON",noteNumber,this.getNoteName(noteNumber))
         if (sustainedNotes.includes(noteNumber)) {
+          console.log("NOTE STILL SUSTAINED WHEN RE-TOUCHED, STOPPING");
           try {
             activeAudioNodes[noteNumber].stop();
           } catch {
             console.log("Tried and failed to stop sustained note being re-touched",noteNumber);
           }
-          activeAudioNodes[noteNumber] = null;
+          delete activeAudioNodes[noteNumber];
         }
 
         let updatedVolume = noteVelocity/100.0 * this.state.volumeRatio;
@@ -643,6 +634,7 @@ class App extends Component {
           let adsr = [this.state.adsr['attack'], this.state.adsr['decay'], this.state.adsr['sustain'], this.state.adsr['release']];
           
           let noteNode = this.state.instrument.play(noteNumber, this.state.ac.currentTime, { gain: updatedVolume, adsr });
+          console.log(noteNode);
           activeAudioNodes[noteNumber] = noteNode;
         } catch {
           // Get rid of this eventually
@@ -655,14 +647,16 @@ class App extends Component {
         if (this.state.sustainPedalOn && !sustainedNotes.includes(noteNumber)) {
           sustainedNotes.push(noteNumber);
         }
+
         if (!activeNotes.includes(noteNumber)) {
           activeNotes.push(parseInt(noteNumber));
         }
+
+        this.setState({activeAudioNodes, activeNotes, sustainedNotes});
+
         this.state.keyboard.activeNotes.add(noteNumber);
 
         this.keyboardToggleKey(noteNumber, true);
-
-        this.setState({activeAudioNodes, activeNotes, sustainedNotes});
       }
     } else if (event.name === "Controller Change") {
       // Controller Change number=64 is a sustain pedal event;
@@ -728,12 +722,13 @@ class App extends Component {
     this.state.sustainedNotes.forEach((noteNumber) => {
       if (!(this.state.activeNotes.includes(parseInt(noteNumber)))) {
         // XXX Maybe use a slower release velocity for pedal events?
+        console.log("NOTE OFF AT SUSTAIN PEDAL RELEASE",noteNumber,this.getNoteName(noteNumber));
         try {
           this.state.activeAudioNodes[noteNumber].stop();
         } catch {
           console.log("FAILED TO UNSUSTAIN",noteNumber);
         }
-        activeAudioNodes[noteNumber] = null;
+        delete activeAudioNodes[noteNumber];
       }
     });
     this.setState({ sustainPedalOn: false, activeAudioNodes, sustainedNotes: [] });
@@ -955,7 +950,7 @@ class App extends Component {
             }} />
           </div>
         </div>
-        <div class="keyboard piano-keyboard-horizontal" style={{width: "100%", height: "100px"}}></div>
+        <div class="keyboard piano-keyboard-horizontal" style={{width: "1000px", height: "100px"}}></div>
         <div style={{width: "1000px"}}>
           <button id="soft_pedal" name="soft" onClick={this.togglePedalLock} style={{background: (this.state.softPedalOn ? "lightblue" : "white")}}>SOFT</button>
           <button id="sustain_pedal" name="sustain" onClick={this.togglePedalLock} style={{background: (this.state.sustainPedalOn ? "lightblue" : "white")}}>SUST</button>
