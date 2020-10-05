@@ -591,10 +591,10 @@ class App extends Component {
 
         if (!this.state.sustainedNotes.includes(noteNumber)) {
           try {
-            console.log(activeAudioNodes[noteNumber]);
             activeAudioNodes[noteNumber].stop();
-          } catch {
+          } catch(error) {
             console.log("COULDN'T STOP",noteNumber,this.getNoteName(noteNumber));
+            console.log(error);
             //this.setState({ adsr: ADSR_SAMPLE_DEFAULTS });
           }
           delete activeAudioNodes[noteNumber];
@@ -614,8 +614,9 @@ class App extends Component {
           console.log("NOTE STILL SUSTAINED WHEN RE-TOUCHED, STOPPING");
           try {
             activeAudioNodes[noteNumber].stop();
-          } catch {
+          } catch(error) {
             console.log("Tried and failed to stop sustained note being re-touched",noteNumber);
+            console.log(error);
           }
           delete activeAudioNodes[noteNumber];
         }
@@ -633,14 +634,14 @@ class App extends Component {
         try {
           let adsr = [this.state.adsr['attack'], this.state.adsr['decay'], this.state.adsr['sustain'], this.state.adsr['release']];
           
-          let noteNode = this.state.instrument.play(noteNumber, this.state.ac.currentTime, { gain: updatedVolume, adsr });
-          console.log(noteNode);
+          let noteNode = this.state.instrument.play(noteNumber, this.state.ac.currentTime, { gain: updatedVolume /*, adsr */ });
           activeAudioNodes[noteNumber] = noteNode;
-        } catch {
+        } catch(error) {
           // Get rid of this eventually
-          console.log("IMPOSSIBLE ADSR VALUES FOR THIS NOTE, RESETTING");
+          console.log("ERROR PLAYING NOTE");
+          console.log(error);
           let adsr = [ADSR_SAMPLE_DEFAULTS['attack'], ADSR_SAMPLE_DEFAULTS['decay'], ADSR_SAMPLE_DEFAULTS['sustain'], ADSR_SAMPLE_DEFAULTS['release']];
-          let noteNode = this.state.instrument.play(noteNumber, this.state.ac.currentTime, { gain: updatedVolume, adsr });
+          let noteNode = this.state.instrument.play(noteNumber, this.state.ac.currentTime, { gain: updatedVolume /*, adsr */ });
           activeAudioNodes[noteNumber] = noteNode;
           this.setState({adsr: ADSR_SAMPLE_DEFAULTS});
         }
@@ -725,8 +726,9 @@ class App extends Component {
         console.log("NOTE OFF AT SUSTAIN PEDAL RELEASE",noteNumber,this.getNoteName(noteNumber));
         try {
           this.state.activeAudioNodes[noteNumber].stop();
-        } catch {
+        } catch(error) {
           console.log("FAILED TO UNSUSTAIN",noteNumber);
+          console.log(error);
         }
         delete activeAudioNodes[noteNumber];
       }
@@ -791,8 +793,9 @@ class App extends Component {
       if (noteNumber in this.state.activeAudioNodes) {
         try {
           this.state.activeAudioNodes[noteNumber].stop();
-        } catch {
+        } catch(error) {
           console.log("Keyboard tried and failed to stop playing note to replace it",noteNumber);
+          console.log(error);
         }
       }
       if (this.state.sustainPedalOn && !this.state.sustainedNotes.includes(noteNumber)) {
